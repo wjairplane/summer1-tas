@@ -72,16 +72,18 @@ async function beamChild(cfg, refFile) {
       const cid = nextId++; jobs.push({ pid: nd.id, cid, segs }); meta.push({ parent: nd, segs, isRef: nd.isRef && a === 'ref' });
     }
     const { res } = await sim.raw({ op: 'bExpand', jobs });
-    const bins = new Map(); let refNode = null;
+    const bins = new Map(); let refNode = null; const why = { off: 0, dy: 0, slow: 0, cp: 0, ok: 0 }, prevTop = beam[0]; let topKid = null;
     res.forEach((r, i) => {
       const nd = { id: r.cid, t: r.frames, pos: r.pos, speed: r.speed, cp: r.cp, parent: meta[i].parent, segs: meta[i].segs, isRef: meta[i].isRef };
       if (r.fin) { if (!bestFin || r.frames < bestFin.t) bestFin = nd; return; }
       // progress is continuous: the match point can only move a little from the parent's
       // (stops matches jumping to another part of the track that passes nearby)
       const adv = nd.t - nd.parent.t, pr = project(r.pos, nd.parent.refT + 0.3 * adv, nd.parent.refT + 1.7 * adv);
-      if (pr.off > DEAD_OFF || Math.abs(pr.dy) > 15 || pr.refT < nd.t - 1500) return;           // left the course / hopelessly slow
+      if (process.env.BTRACE && nd.parent === prevTop && (!topKid || pr.refT > topKid.refT)) topKid = { refT: pr.refT, off: pr.off, dy: pr.dy, speed: r.speed, cp: r.cp, pos: r.pos, t: nd.t };
+      if (pr.off > DEAD_OFF) { why.off++; return; } if (pr.dy < -8 || pr.dy > 80) { why.dy++; return; }   // well below the track = fell off; far above = flying (allowed) if (pr.refT < nd.t - 1500) { why.slow++; return; }           // left the course / hopelessly slow
       // a state that is past a reference checkpoint position (with margin) but has not collected it skipped it
-      if (nd.cp < C[Math.max(0, Math.min(C.length - 1, Math.floor(pr.refT) - 30))]) return;
+      if (nd.cp < C[Math.max(0, Math.min(C.length - 1, Math.floor(pr.refT) - 30))]) { why.cp++; return; }
+      why.ok++;
       nd.refT = pr.refT;
       const vr = V[Math.min(V.length - 1, Math.round(pr.refT))] || r.speed;
       nd.score = (pr.refT - nd.t) + ((r.speed - vr) / Math.max(vr, 1)) * SPEED_H;
@@ -102,6 +104,8 @@ async function beamChild(cfg, refFile) {
     beam = [...picked].sort((a, b) => b.score - a.score);
     if (refNode && !beam.includes(refNode)) beam[beam.length - 1 < K - 1 ? beam.length : K - 1] = refNode;   // the reference line always survives
     await sim.raw({ op: 'bKeep', ids: beam.map(n => n.id) });
+    if (process.env.BTRACE) { const [a, b] = process.env.BTRACE.split('-').map(Number); if (prevTop && prevTop.t >= a && prevTop.t <= b && step % 2 === 0) {
+      const k = topKid; process.send({ log: `TRACE t=${prevTop.t} top ahead=${(prevTop.refT - prevTop.t).toFixed(1)} speed=${(prevTop.speed||0).toFixed(0)} cp=${prevTop.cp} | its furthest child: ${k ? `ahead=${(k.refT - k.t).toFixed(1)} off=${k.off.toFixed(1)} dy=${k.dy.toFixed(1)} v=${k.speed.toFixed(0)} cp=${k.cp} pos=${k.pos.map(x => x.toFixed(1))}` : 'none'} | all children: ${JSON.stringify(why)}` }); } }
     if (process.env.BDEBUG && beam[0] && beam[0].t >= +process.env.BDEBUG && !globalThis.__dbg) {
       globalThis.__dbg = 1; const n = beam[0], j = Math.floor(n.refT), q = i => [P[3 * i], P[3 * i + 1], P[3 * i + 2]].map(x => x.toFixed(2)).join(',');
       const chainT = []; for (let a = n; a; a = a.parent) chainT.push(`${a.t}:${a.refT !== undefined ? (a.refT - a.t).toFixed(1) : '-'}`);
