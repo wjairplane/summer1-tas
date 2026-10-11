@@ -8,10 +8,11 @@ const NAME = Object.fromEntries(Object.entries(KEY).map(([a, b]) => [b, a]));
 if (process.argv[2] === 'child') {
   (async () => {
     const sim = await createSim();
+    await sim.initFast();
     process.send({ ready: true });
-    process.on('message', async ({ id, lists, cap }) => {
-      const r = await sim.run(encodeRecording(lists), cap);
-      process.send({ id, finished: r.result === false ? r.frames < cap : true, frames: r.frames, ok: r.frames <= cap, pos: decodePos(r.last), fin: !!(Buffer.from(r.last)[11] & 2) });
+    process.on('message', async m => {
+      const r = m.op === 'setBase' ? await sim.setBase(m.L, m.cap) : await sim.evalFrom(m.L, m.from, m.cap);
+      process.send({ id: m.id, frames: r.frames, fin: r.fin, pos: decodePos(r.last) });
     });
   })();
 } else {
@@ -30,7 +31,7 @@ if (process.argv[2] === 'child') {
     const M = clone(L), r = Math.random();
     const k = pick(STEER), l = M[k];
     if (!l.length) return null;
-    const i = rnd(l.length);
+    const i = Math.random() < 0.5 ? Math.max(0, l.length - 1 - rnd(Math.ceil(l.length * 0.3))) : rnd(l.length);
     const d = pick([-1, 1, -2, 2, -3, 3, -5, 5, -8, 8, -15, 15, -30, 30]);
     if (r < 0.6) l[i] += d;                                           // move one toggle
     else if (r < 0.8) { const j = i ^ 1; if (j < l.length) { l[i] += d; l[j] += d; } } // move a whole tap
@@ -44,22 +45,24 @@ if (process.argv[2] === 'child') {
     for (let i = 0; i < NK; i++) { const c = fork(__filename, ['child']); await new Promise(r => c.once('message', r)); kids.push(c); }
     let nextId = 0; const pending = new Map();
     kids.forEach(c => c.on('message', m => { const p = pending.get(m.id); if (p) { pending.delete(m.id); p(m); } }));
-    const evalAt = (c, L, cap) => new Promise(res => { const id = nextId++; pending.set(id, res); c.send({ id, lists: L, cap }); });
+    const send = (c, m) => new Promise(res => { const id = nextId++; pending.set(id, res); c.send({ id, ...m }); });
+    const setBase = (L, cap) => Promise.all(kids.map(c => send(c, { op: 'setBase', L, cap })));
+    const firstDiff = (A, B) => { let m = Infinity; for (const k of ['up', 'right', 'down', 'left']) { const n = Math.max(A[k].length, B[k].length); for (let i = 0; i < n; i++) if (A[k][i] !== B[k][i]) { m = Math.min(m, A[k][i] ?? Infinity, B[k][i] ?? Infinity); break; } } return m; };
 
     let best = lists, cap = 22113;                  // goal: finish at frame <= cap
-    const base = await evalAt(kids[0], best, 30000);
+    const base = (await setBase(best, 30000))[0];
     console.log('baseline frames', base.frames);
     cap = base.frames - 1;
     // reference point = where the baseline run is at the finish; closeness to it at frame `cap` = progress
     let ref = base.pos;
     const dist = p => Math.hypot(p[0] - ref[0], p[1] - ref[1], p[2] - ref[2]);
     const score = r => r.fin ? -1e6 + r.frames : dist(r.pos);
-    let bestScore = score(await evalAt(kids[0], best, cap));
+    let bestScore = score((await setBase(best, cap))[0]);
     console.log('start score', bestScore.toFixed(4));
     const t0 = Date.now(); let rounds = 0, improved = 0;
     while (Date.now() - t0 < minutes * 60000) {
-      const muts = []; while (muts.length < 8 * NK) { const m = mutate(best); if (m) muts.push(m); }
-      const rs = await Promise.all(muts.map((m, i) => evalAt(kids[i % NK], m, cap)));
+      const muts = []; while (muts.length < 16 * NK) { const m = mutate(best); if (m) muts.push(m); }
+      const rs = await Promise.all(muts.map((m, i) => send(kids[i % NK], { op: 'eval', L: m, from: firstDiff(best, m), cap })));
       let bi = -1, bs = bestScore;
       rs.forEach((r, i) => { const s = score(r); if (s < bs) { bs = s; bi = i; } });
       rounds++;
@@ -70,7 +73,9 @@ if (process.argv[2] === 'child') {
         const ev = []; for (const k of ['up', 'right', 'down', 'left']) best[k].forEach((f, i) => ev.push([f, NAME[k], i % 2 === 0]));
         ev.sort((a, b) => a[0] - b[0] || a[1].localeCompare(b[1]));
         fs.writeFileSync(outFile, JSON.stringify(ev));
-        if (finished) { ref = rs[bi].pos; cap = rs[bi].frames - 1; bestScore = score(await evalAt(kids[0], best, cap)); console.log('new cap', cap, 'score', bestScore.toFixed(4)); }
+        if (finished) { ref = rs[bi].pos; cap = rs[bi].frames - 1; }
+        bestScore = score((await setBase(best, cap))[0]);           // refresh snapshots on every worker
+        if (finished) console.log('new cap', cap, 'score', bestScore.toFixed(4));
       }
     }
     console.log(`done: ${rounds} rounds, ${improved} improvements, best score ${bestScore.toFixed(4)}, cap ${cap}`);
