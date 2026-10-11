@@ -11,7 +11,7 @@
 //    and time-cut crossover between two parents.
 //  - When the best individual is ahead of the reference and its real finish frame is not
 //    worse, it becomes the new reference and is written to the output file.
-// usage: node tools/evolve.js [minutes=10] [in] [out]
+// usage: [SEED=start.json] node tools/evolve.js [minutes=10] [in] [out]
 const { fork } = require('child_process'), fs = require('fs');
 const { createSim } = require('./sim.js');
 const KEY = { KeyW: 'up', KeyD: 'right', KeyS: 'down', KeyA: 'left', Reset: 'reset' };
@@ -161,8 +161,12 @@ function crossover(A, B) {                          // A before time t, B from t
   await rebase();
   const startFinish = finish;
   console.log('start finish frames', finish);
-  let pop = [{ L: clone(seed) }];
-  while (pop.length < POP) { const L = Math.random() < 0.5 ? big(seed) : small(seed, 1, TF); if (valid(L)) pop.push({ L }); }
+  // SEED=<file>: start the population from another run (e.g. a changed section whose later
+  // inputs still need repairing) while fitness stays relative to the reference (inFile)
+  let start = seed;
+  if (process.env.SEED) { start = { up: [], right: [], down: [], left: [], reset: [] }; for (const [f, k] of JSON.parse(fs.readFileSync(process.env.SEED))) start[KEY[k]].push(f); for (const k in start) start[k].sort((a, b) => a - b); console.log('population seeded from', process.env.SEED); }
+  let pop = [{ L: clone(start) }];
+  while (pop.length < POP) { const L = Math.random() < 0.5 ? big(start) : small(start, 1, TF); if (valid(L)) pop.push({ L }); }
   await evalAll(pop);
   const t0 = Date.now(); let gen = 0, evals = pop.length, refUpdates = 0;
   while (Date.now() - t0 < minutes * 60000) {
