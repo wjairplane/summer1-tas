@@ -18,11 +18,11 @@ after the page is open.
 - **Headless:** `npm i playwright && node tools/run_headless.js` (prints the
   final time, saves `result.png`).
 
-## Optimized run (22.102s)
+## Optimized run (22.101s)
 
-`inputs/summer1_opt.json` / `tas-exact-opt.user.js` finish in **22.102s**, 12 ms faster than
+`inputs/summer1_opt.json` / `tas-exact-opt.user.js` finish in **22.101s**, 13 ms faster than
 the replayed #1 (22.114s). Verified in the real game in headless Chromium. Found with
-`tools/optimize.js` (hill-climb over tap timings using the game's own physics worker run
+`tools/optimize.js` then `tools/optimize2.js` (hill-climb over tap timings using the game's own physics worker run
 offline in Node, with snapshot-and-resume so late-run edits cost ~18 ms instead of ~400 ms).
 Setup: `tools/fetch_sim_assets.sh`, then `node tools/optimize.js [minutes] [in] [out]`.
 
