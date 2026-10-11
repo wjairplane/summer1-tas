@@ -45,7 +45,9 @@ async function createSim() {
   const initFast = () => call({ op: 'init', trackData: create.trackData, mountainVertices: create.mountainVertices, mountainOffset: create.mountainOffset }, 'init');
   const setBase = (L, cap) => { const id = cid++; return call({ op: 'setBase', L, cap, id }, id); };
   const evalFrom = (L, from, cap, sample) => { const id = cid++; return call({ op: 'eval', L, from, cap, sample, id }, id); };
-  return { run, initFast, setBase, evalFrom };
+  const probe = (L, cap, every) => { const id = cid++; return call({ op: 'probe', L, cap, every, id }, id); };
+  const raw = msg => { const id = cid++; return call({ ...msg, id }, id); };
+  return { run, initFast, setBase, evalFrom, probe, raw };
 }
 module.exports = { createSim };
 

@@ -1,0 +1,149 @@
+// Beam search over driving: grows the run forward from the start instead of editing a
+// finished input sequence, so it can find genuinely different racing lines.
+//  - Every BLOCK ms each live car state branches into ACTIONS: W, W+right, W+left, coast,
+//    brake, and "ref" (play the reference run's inputs from the point on the track the
+//    state has reached; keeps the reference line alive and lets new lines follow it).
+//  - States are scored by ms ahead of the reference line (+ a speed term) and binned by
+//    position offset and heading relative to that line; the best state per bin survives
+//    and the top K bins are kept -> many lines stay alive at once.
+//  - Car states are heap snapshots of only the pages physics changes (~0.5 MB, not 24 MB).
+//  - NK independent beams with different settings run in parallel (one per core); the main
+//    process verifies every result with a clean, snapshot-free simulation.
+// usage: node tools/beam.js [ref=inputs/summer1_opt.json] [out=inputs/summer1_beam.json]
+const { fork } = require('child_process'), fs = require('fs');
+const { createSim, encodeRecording } = require('./sim.js');
+const KEY = { KeyW: 'up', KeyD: 'right', KeyS: 'down', KeyA: 'left', Reset: 'reset' };
+const NAME = Object.fromEntries(Object.entries(KEY).map(([a, b]) => [b, a]));
+const BIT = { up: 1, right: 2, down: 4, left: 8 };
+const ACTIONS = [1, 3, 9, 0, 4, 'ref'];
+const load = f => { const L = { up: [], right: [], down: [], left: [], reset: [] }; for (const [fr, k] of JSON.parse(fs.readFileSync(f))) L[KEY[k]].push(fr); for (const k in L) L[k].sort((a, b) => a - b); return L; };
+const toEvents = L => { const ev = []; for (const k of ['up', 'right', 'down', 'left']) L[k].forEach((f, i) => ev.push([f, NAME[k], i % 2 === 0])); return ev.sort((a, b) => a[0] - b[0] || a[1].localeCompare(b[1])); };
+const bitsToLists = bits => { const L = { up: [], right: [], down: [], left: [], reset: [] }; for (const k in BIT) { let on = false; for (let f = 0; f < bits.length; f++) { const b = !!(bits[f] & BIT[k]); if (b !== on) { L[k].push(f); on = b; } } } return L; };
+
+const CONFIGS = [
+  { name: 'b20', BLOCK: 20, K: 150, BIN_POS: 1.0, BIN_DIR: 0.05 },
+  { name: 'b15', BLOCK: 15, K: 120, BIN_POS: 1.0, BIN_DIR: 0.05 },
+  { name: 'b25', BLOCK: 25, K: 180, BIN_POS: 1.0, BIN_DIR: 0.05 },
+  { name: 'b20fine', BLOCK: 20, K: 150, BIN_POS: 0.5, BIN_DIR: 0.03 },
+];
+
+async function beamChild(cfg, refFile) {
+  const { BLOCK, K, BIN_POS, BIN_DIR } = cfg;
+  const SPEED_H = cfg.SPEED_H ?? 60, DEAD_OFF = 12;
+  const sim = await createSim(); await sim.initFast();
+  const ref = load(refFile);
+  const base = await sim.setBase(ref, 30000);
+  const P = base.P, V = base.V, C = base.C, finish = base.frames, N = finish + 2000;
+  const cpFrames = []; for (let f = 1; f < C.length; f++) if (C[f] > C[f - 1]) cpFrames.push(f);
+  process.send({ log: `[${cfg.name}] reference checkpoints at frames ${cpFrames.join(', ')}, finish ${finish}` });
+  const refBits = new Uint8Array(N);
+  for (const k in BIT) { let on = false, i = 0; const a = ref[k]; for (let f = 0; f < N; f++) { while (i < a.length && a[i] <= f) { on = !on; i++; } if (on) refBits[f] |= BIT[k]; } }
+  const pages = new Set((await sim.probe(ref, 30000, 50)).pages); for (let i = 0; i < 40; i++) pages.add(i);
+  await sim.raw({ op: 'bSetup', D: [...pages].sort((a, b) => a - b) });
+
+  function project(p, lo, hi) {                  // foot point on the reference line between frames lo..hi
+    let bestD = Infinity, bj = 0, bu = 0;
+    lo = Math.max(0, Math.floor(lo)); hi = Math.min(finish - 1, Math.ceil(hi));
+    for (let j = lo; j < hi; j++) {
+      // match on the ground plane (y is up): jumps/drops would otherwise bias 3D matching
+      const ax = P[3 * j], az = P[3 * j + 2];
+      const bx = P[3 * j + 3] - ax, bz = P[3 * j + 5] - az;
+      const L2 = bx * bx + bz * bz || 1e-12;
+      let u = ((p[0] - ax) * bx + (p[2] - az) * bz) / L2; u = Math.max(0, Math.min(1, u));
+      const dx = ax + u * bx - p[0], dz = az + u * bz - p[2], d = dx * dx + dz * dz;
+      if (d < bestD) { bestD = d; bj = j; bu = u; }
+    }
+    const j = bj, bx = P[3 * j + 3] - P[3 * j], by = P[3 * j + 4] - P[3 * j + 1], bz = P[3 * j + 5] - P[3 * j + 2], l = Math.hypot(bx, by, bz) || 1e-9;
+    return { refT: j + bu, off: Math.sqrt(bestD), dy: p[1] - (P[3 * j + 1] + bu * by), foot: [P[3 * j] + bu * bx, P[3 * j + 1] + bu * by, P[3 * j + 2] + bu * bz], tan: [bx / l, by / l, bz / l] };
+  }
+  const segsRef = (t, len) => { const s = []; for (let f = t; f < t + len; f++) { const b = refBits[Math.min(f, N - 1)]; if (s.length && s[s.length - 1][0] === b) s[s.length - 1][1]++; else s.push([b, 1]); } return s; };
+
+  let beam = [{ id: 0, t: 0, pos: [P[0], P[1], P[2]], parent: null, segs: null, refT: 0, isRef: true }];
+  let nextId = 1, bestFin = null, step = 0;
+  const t0 = Date.now();
+  while (beam.length) {
+    step++;
+    const jobs = [], meta = [];
+    for (const nd of beam) for (const a of ACTIONS) {
+      // 'ref': the reference line plays its own inputs; any other state plays the reference
+      // inputs from the point it has reached on the track (not the clock), so lines that are
+      // ahead/behind can still follow the reference's steering through upcoming corners
+      const segs = a === 'ref' ? segsRef(nd.isRef ? nd.t : Math.max(0, Math.round(nd.refT)), BLOCK) : [[a, BLOCK]];
+      const cid = nextId++; jobs.push({ pid: nd.id, cid, segs }); meta.push({ parent: nd, segs, isRef: nd.isRef && a === 'ref' });
+    }
+    const { res } = await sim.raw({ op: 'bExpand', jobs });
+    const bins = new Map(); let refNode = null;
+    res.forEach((r, i) => {
+      const nd = { id: r.cid, t: r.frames, pos: r.pos, speed: r.speed, cp: r.cp, parent: meta[i].parent, segs: meta[i].segs, isRef: meta[i].isRef };
+      if (r.fin) { if (!bestFin || r.frames < bestFin.t) bestFin = nd; return; }
+      // progress is continuous: the match point can only move a little from the parent's
+      // (stops matches jumping to another part of the track that passes nearby)
+      const adv = nd.t - nd.parent.t, pr = project(r.pos, nd.parent.refT + 0.3 * adv, nd.parent.refT + 1.7 * adv);
+      if (pr.off > DEAD_OFF || Math.abs(pr.dy) > 15 || pr.refT < nd.t - 1500) return;           // left the course / hopelessly slow
+      // a state that is past a reference checkpoint position (with margin) but has not collected it skipped it
+      if (nd.cp < C[Math.max(0, Math.min(C.length - 1, Math.floor(pr.refT) - 30))]) return;
+      nd.refT = pr.refT;
+      const vr = V[Math.min(V.length - 1, Math.round(pr.refT))] || r.speed;
+      nd.score = (pr.refT - nd.t) + ((r.speed - vr) / Math.max(vr, 1)) * SPEED_H;
+      const dt = Math.max(1, nd.t - nd.parent.t), v = [(r.pos[0] - nd.parent.pos[0]) / dt, (r.pos[1] - nd.parent.pos[1]) / dt, (r.pos[2] - nd.parent.pos[2]) / dt];
+      const vl = Math.hypot(v[0], v[1], v[2]) || 1e-9;
+      const off = [0, 1, 2].map(i => r.pos[i] - pr.foot[i]), dir = [0, 1, 2].map(i => v[i] / vl - pr.tan[i]);
+      nd.coarse = off.map(x => Math.round(x / BIN_POS)).concat(dir.map(x => Math.round(x / BIN_DIR))).join(',');
+      const fine = off.map(x => Math.round(x / 0.03)).concat(dir.map(x => Math.round(x / 0.003))).join(',');
+      if (nd.isRef) refNode = nd;
+      const cur = bins.get(fine);                                       // fine bins only remove near-duplicates
+      if (!cur || nd.score > cur.score) bins.set(fine, nd);
+    });
+    // selection: the best state of each coarse bin (different lines) gets a reserved slot,
+    // up to a third of the beam; the rest is filled purely by score
+    const sorted = [...bins.values()].sort((a, b) => b.score - a.score), seenC = new Set(), picked = new Set();
+    for (const nd of sorted) { if (picked.size >= Math.floor(K / 3)) break; if (!seenC.has(nd.coarse)) { seenC.add(nd.coarse); picked.add(nd); } }
+    for (const nd of sorted) { if (picked.size >= K) break; picked.add(nd); }
+    beam = [...picked].sort((a, b) => b.score - a.score);
+    if (refNode && !beam.includes(refNode)) beam[beam.length - 1 < K - 1 ? beam.length : K - 1] = refNode;   // the reference line always survives
+    await sim.raw({ op: 'bKeep', ids: beam.map(n => n.id) });
+    if (process.env.BDEBUG && beam[0] && beam[0].t >= +process.env.BDEBUG && !globalThis.__dbg) {
+      globalThis.__dbg = 1; const n = beam[0], j = Math.floor(n.refT), q = i => [P[3 * i], P[3 * i + 1], P[3 * i + 2]].map(x => x.toFixed(2)).join(',');
+      const chainT = []; for (let a = n; a; a = a.parent) chainT.push(`${a.t}:${a.refT !== undefined ? (a.refT - a.t).toFixed(1) : '-'}`);
+      process.send({ log: `DEBUG top t=${n.t} refT=${n.refT.toFixed(1)} pos=${n.pos.map(x => x.toFixed(2)).join(',')} speed=${n.speed.toFixed(1)} cp=${n.cp} | ref@refT=${q(j)} ref@t=${q(n.t)} refSpeed@t=${V[n.t].toFixed(1)} | ahead history (t:ms) ${chainT.slice(0, 60).reverse().join(' ')}` });
+    }
+    if (step % 50 === 0) {
+      const lk = await sim.raw({ op: 'bLeak' });
+      const top = beam[0];
+      process.send({ log: `[${cfg.name}] t=${top ? top.t : '-'} beam=${beam.length} lines=${new Set(beam.map(n => n.coarse)).size} top ahead=${top ? (top.refT - top.t).toFixed(2) : '-'}ms score=${top ? top.score.toFixed(2) : '-'} ref=${beam.some(n => n.isRef) ? 'kept' : 'lost'} ${lk.leak.length ? 'LEAK ' + lk.leak.length + ' pages' : ''} ${((Date.now() - t0) / 1000).toFixed(0)}s` });
+    }
+    if (bestFin && beam.length && beam[0].t > bestFin.t) break;
+  }
+  if (!bestFin) return { name: cfg.name, finish: null };
+  const chain = []; for (let n = bestFin; n.parent; n = n.parent) chain.push(n.segs);
+  const bits = []; for (const segs of chain.reverse()) for (const [b, len] of segs) for (let k = 0; k < len; k++) bits.push(b);
+  return { name: cfg.name, finish: bestFin.t, events: toEvents(bitsToLists(bits.slice(0, bestFin.t + 1))) };
+}
+
+if (process.argv[2] === 'child') {
+  process.on('message', async m => { const r = await beamChild(m.cfg, m.ref); process.send({ result: r }); });
+  return;
+}
+
+const refFile = process.argv[2] || 'inputs/summer1_opt.json', outFile = process.argv[3] || 'inputs/summer1_beam.json';
+const only = process.env.CONFIGS ? process.env.CONFIGS.split(',') : null;
+(async () => {
+  const cfgs = CONFIGS.filter(c => !only || only.includes(c.name));
+  const results = await Promise.all(cfgs.map(cfg => new Promise(res => {
+    const c = fork(__filename, ['child'], { serialization: 'advanced' });
+    c.on('message', m => { if (m.log) console.log(m.log); if (m.result) { res(m.result); c.kill(); } });
+    c.send({ cfg, ref: refFile });
+  })));
+  // verify each result with the game's own clean recording path (no snapshots involved)
+  const sim = await createSim();
+  let best = null;
+  for (const r of results) {
+    if (!r.finish) { console.log(`${r.name}: no finish`); continue; }
+    const L = { up: [], right: [], down: [], left: [], reset: [] }; for (const [f, k] of r.events) L[KEY[k]].push(f);
+    const v = await sim.run(encodeRecording(L), 30000);
+    console.log(`${r.name}: beam finish ${r.finish}, clean re-simulation ${v.frames}`);
+    if (!best || v.frames < best.frames) best = { ...r, frames: v.frames };
+  }
+  if (best) { fs.writeFileSync(outFile, JSON.stringify(best.events)); console.log(`best: ${best.name} ${best.frames} frames -> ${outFile}`); }
+  process.exit(0);
+})();
