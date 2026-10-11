@@ -44,7 +44,7 @@ async function createSim() {
   const call = (msg, key) => new Promise(res => { waiters.set(key, res); g.onmessage({ data: { messageType: 77, ...msg } }); });
   const initFast = () => call({ op: 'init', trackData: create.trackData, mountainVertices: create.mountainVertices, mountainOffset: create.mountainOffset }, 'init');
   const setBase = (L, cap) => { const id = cid++; return call({ op: 'setBase', L, cap, id }, id); };
-  const evalFrom = (L, from, cap) => { const id = cid++; return call({ op: 'eval', L, from, cap, id }, id); };
+  const evalFrom = (L, from, cap, sample) => { const id = cid++; return call({ op: 'eval', L, from, cap, sample, id }, id); };
   return { run, initFast, setBase, evalFrom };
 }
 module.exports = { createSim };
