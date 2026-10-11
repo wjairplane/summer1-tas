@@ -75,7 +75,7 @@ async function beamChild(cfg, refFile) {
     beam = [{ id: 1, t: r.frames, pos: r.pos, speed: r.speed, cp: r.cp, parent: beam[0], segs: segsRef(0, BSTART), refT: r.frames, isRef: true }];
     await sim.raw({ op: 'bKeep', ids: [1] });
   }
-  let nextId = 2, bestFin = null, step = 0, totalLeaks = 0;
+  let nextId = 2, bestFin = null, step = 0, totalLeaks = 0; const finishers = [];
   const t0 = Date.now();
   while (beam.length) {
     step++;
@@ -99,7 +99,7 @@ async function beamChild(cfg, refFile) {
     const bins = new Map(); let refNode = null; const why = { off: 0, dy: 0, slow: 0, cp: 0, ok: 0 }, prevTop = beam[0]; let topKid = null;
     res.forEach((r, i) => {
       const nd = { id: r.cid, t: r.frames, pos: r.pos, speed: r.speed, cp: r.cp, parent: meta[i].parent, segs: meta[i].segs, isRef: meta[i].isRef };
-      if (r.fin) { if (!bestFin || r.frames < bestFin.t) bestFin = nd; return; }
+      if (r.fin) { finishers.push(nd); if (!bestFin || r.frames < bestFin.t) bestFin = nd; return; }
       // progress is continuous: the match point can only move a little from the parent's
       // (stops matches jumping to another part of the track that passes nearby)
       const adv = nd.t - nd.parent.t, pr = project(r.pos, nd.parent.refT + 0.3 * adv, nd.parent.refT + 1.7 * adv);
@@ -146,12 +146,22 @@ async function beamChild(cfg, refFile) {
       const top = beam[0];
       process.send({ log: `[${cfg.name}] t=${top ? top.t : '-'} beam=${beam.length} lines=${new Set(beam.map(n => n.coarse)).size} top ahead=${top ? (top.refT - top.t).toFixed(2) : '-'}ms score=${top ? top.score.toFixed(2) : '-'} ref=${beam.some(n => n.isRef) ? 'kept' : 'lost'} ${totalLeaks ? 'pages added ' + totalLeaks : ''} ${bestFin ? 'best finish so far ' + bestFin.t : ''} ${((Date.now() - t0) / 1000).toFixed(0)}s` });
     }
-    if (bestFin && beam.length && beam[0].t > bestFin.t) break;
+    if (bestFin && beam.length && beam[0].t > bestFin.t + (+process.env.NFIN_SLACK || 0)) break;
   }
   if (!bestFin) return { name: cfg.name, finish: null };
-  const chain = []; for (let n = bestFin; n.parent; n = n.parent) chain.push(n.segs);
-  const bits = []; for (const segs of chain.reverse()) for (const [b, len] of segs) for (let k = 0; k < len; k++) bits.push(b);
-  return { name: cfg.name, finish: bestFin.t, events: toEvents(bitsToLists(bits.slice(0, bestFin.t + 1))) };
+  const bitsOf = nd => { const chain = []; for (let n = nd; n.parent; n = n.parent) chain.push(n.segs); const bits = []; for (const segs of chain.reverse()) for (const [b, len] of segs) for (let k = 0; k < len; k++) bits.push(b); return bits.slice(0, nd.t + 1); };
+  // NFIN=k: also return up to k distinct finishing lines (split from the reference >=150 ms apart)
+  const alts = [];
+  if (+process.env.NFIN > 1) {
+    const used = [];
+    for (const nd of finishers.sort((a, b) => a.t - b.t)) {
+      const bits = bitsOf(nd); let split = 0; while (split < bits.length && bits[split] === refBits[split]) split++;
+      if (used.some(u => Math.abs(u - split) < 150)) continue;
+      used.push(split); alts.push({ finish: nd.t, split, events: toEvents(bitsToLists(bits)) });
+      if (alts.length >= +process.env.NFIN) break;
+    }
+  }
+  return { name: cfg.name, finish: bestFin.t, events: toEvents(bitsToLists(bitsOf(bestFin))), alts };
 }
 
 if (process.argv[2] === 'child') {
@@ -179,6 +189,12 @@ const only = process.env.CONFIGS ? process.env.CONFIGS.split(',') : ['b20', 'b15
     const v = await sim.run(encodeRecording(L), 30000);
     console.log(`${r.name}: beam finish ${r.finish}, clean re-simulation ${v.frames}`);
     if (!best || v.frames < best.frames) best = { ...r, frames: v.frames };
+    for (const [i, a] of (r.alts || []).entries()) {
+      const AL = { up: [], right: [], down: [], left: [], reset: [] }; for (const [f, k] of a.events) AL[KEY[k]].push(f);
+      const av = await sim.run(encodeRecording(AL), 30000);
+      const f = outFile.replace(/\.json$/, `_${r.name}_alt${i}.json`); fs.writeFileSync(f, JSON.stringify(a.events));
+      console.log(`  ${r.name} alt ${i}: splits from reference at ${a.split} ms, clean finish ${av.frames} -> ${f}`);
+    }
   }
   if (best) { fs.writeFileSync(outFile, JSON.stringify(best.events)); console.log(`best: ${best.name} ${best.frames} frames -> ${outFile}`); }
   process.exit(0);
