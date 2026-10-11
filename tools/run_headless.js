@@ -18,7 +18,7 @@ const { chromium } = require('playwright');
   }
   await p.waitForTimeout(32000);
   const t = await txt();
-  console.log('final time:', (t.match(/\d\d:\d\d\.\d{3}(?= \S \d)/) || ['not finished'])[0]);
+  console.log('final time:', (t.match(/Summer 1 (\d\d:\d\d\.\d{3})/) || [, 'not finished'])[1]);
   await p.screenshot({ path: 'result.png' });
   await b.close();
 })();
