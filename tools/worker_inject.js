@@ -3,6 +3,7 @@
 const __S={snaps:new Map(),K:1000,zero:null};
 const __KEYS=["up","right","down","left","reset"];
 function __pos(b){const v=new DataView(b);const u=new Uint8Array(b);const o=(u[11]&2)?17:14;return[v.getFloat32(o,!0),v.getFloat32(o+4,!0),v.getFloat32(o+8,!0)]}
+function __quat(b){const u=new Uint8Array(b),v=new DataView(b),o=((u[11]&2)?17:14)+12;return[v.getFloat32(o,!0),v.getFloat32(o+4,!0),v.getFloat32(o+8,!0),v.getFloat32(o+12,!0)]}
 function __cp(b){const u=new Uint8Array(b);return new DataView(b).getUint16((u[11]&2)?15:12,!0)}
 function __go(L,h,cap,record,sample,cpStop){
   const idx={},ctl={};let last=null;
@@ -56,7 +57,39 @@ function __beam(m){
   }
   return null;
 }
+
+// ---- closed-loop tail: replay the reference by track progress, correct steering when off-heading ----
+const __C={P:null,bits:null,N:0};
+function __yaw(q){const[x,y,z,w]=q;const fx=2*(x*z+w*y),fz=1-2*(x*x+y*y);return Math.atan2(fx,fz)}  // heading of local +z
+function __ctlRun(m){
+  let F=0;for(const k of __S.snaps.keys())if(k<=m.from&&k>F)F=k;t.HEAPU8.set(__S.snaps.get(F));
+  const P=__C.P,RB=__C.bits,N=__C.N,h={id:0,hasFinished:false,frames:F},idx={},ctl={},out=new Uint8Array(m.cap+1);
+  for(const k of __KEYS)idx[k]=0;
+  let j=F,last=null,over=0,lastOff=0,corr=false;
+  const near=(p)=>{let bd=1e18,bj=j;const lo=Math.max(0,Math.floor(j)-30),hi=Math.min(N-2,Math.floor(j)+90);
+    for(let i=lo;i<hi;i++){const ax=P[3*i],az=P[3*i+2],bx=P[3*i+3]-ax,bz=P[3*i+5]-az,L2=bx*bx+bz*bz||1e-12;
+      let u=((p[0]-ax)*bx+(p[2]-az)*bz)/L2;u=Math.max(0,Math.min(1,u));const dx=ax+u*bx-p[0],dz=az+u*bz-p[2],d=dx*dx+dz*dz;if(d<bd){bd=d;bj=i+u}}
+    j=bj;return Math.sqrt(bd)};
+  while(!h.hasFinished&&h.frames<m.cap){
+    const f=h.frames;let bits=0;
+    if(f<m.cut){for(const k of __KEYS){const a=m.L[k];let i=idx[k];while(i<a.length&&a[i]<=f)i++;idx[k]=i;if(i&1)bits|=({up:1,right:2,down:4,left:8})[k]||0}}
+    else{
+      const ji=Math.max(0,Math.min(N-1,Math.round(j)));bits=RB[ji];
+      if(last){const p=__pos(last),q=__quat(last),tg=Math.min(N-2,ji+m.look);
+        const want=Math.atan2(P[3*tg]-p[0],P[3*tg+2]-p[2]);let e=want-__yaw(q);while(e>Math.PI)e-=2*Math.PI;while(e<-Math.PI)e+=2*Math.PI;
+        if(m.mode==='off'){ // correct only when sideways off the reference line by > dOff, until back within dOff/2
+          if(lastOff>m.dOff)corr=true;else if(lastOff<m.dOff*0.5)corr=false;
+          if(corr){bits&=~10;if(e>m.thr)bits|=8;else if(e<-m.thr)bits|=2;over++}
+        }else if(m.mode==='pp'||Math.abs(e)>m.thr){bits&=~10;if(e>m.thr*0.5)bits|=8;else if(e<-m.thr*0.5)bits|=2;over++}}
+    }
+    ctl.up=!!(bits&1);ctl.right=!!(bits&2);ctl.down=!!(bits&4);ctl.left=!!(bits&8);ctl.reset=false;
+    const b=n(h,ctl);h.hasFinished=Xo(new Uint8Array(b));out[f]=bits;h.frames++;last=b;lastOff=near(__pos(b));
+  }
+  return{frames:h.frames,fin:h.hasFinished,cp:__cp(last),pos:__pos(last),speed:new DataView(last).getFloat32(7,!0),overrides:over,bits:out.slice(0,h.frames)};
+}
 function __custom(m){
+  if(m.op==='ctlSetup'){__C.P=m.P;__C.bits=m.bits;__C.N=m.N;postMessage({op:'res',id:m.id,ok:true});return}
+  if(m.op==='ctlRun'){const r=__ctlRun(m);r.op='res';r.id=m.id;postMessage(r);return}
   if(m.op&&m.op[0]==='b'&&m.op!=='bad'){const r=__beam(m);if(r){r.op='res';r.id=m.id;postMessage(r);return}}
   if(m.op==="init"){
     const i=Ko.fromSaveString(m.trackData);const o=i.getStartTransform();
@@ -66,6 +99,11 @@ function __custom(m){
   }else if(m.op==="setBase"){
     __S.snaps.clear();__S.snaps.set(0,__S.zero);t.HEAPU8.set(__S.zero);
     const r=__go(m.L,{id:0,hasFinished:false,frames:0},m.cap,true);r.id=m.id;postMessage(r);
+  }else if(m.op==="quatProbe"){
+    t.HEAPU8.set(__S.zero);const h={id:0,hasFinished:false,frames:0},out=[],ctl={},idx={};for(const k of __KEYS)idx[k]=0;
+    while(!h.hasFinished&&h.frames<m.cap){const f=h.frames;for(const k of __KEYS){const a=m.L[k];let i=idx[k];while(i<a.length&&a[i]<=f)i++;idx[k]=i;ctl[k]=(i&1)==1}
+      const b=n(h,ctl);h.hasFinished=Xo(new Uint8Array(b));h.frames++;if(h.frames%m.every==0)out.push([h.frames,...__pos(b),...__quat(b)])}
+    postMessage({op:"res",id:m.id,out});
   }else if(m.op==="probe"){
     // which 4 KB heap pages ever differ from the post-init heap while driving L?
     t.HEAPU8.set(__S.zero);const PG=4096,Z=__S.zero,dirty=new Set();
