@@ -40,9 +40,16 @@
       if (!seq.length) return console.warn("[TAS] nothing loaded");
       TAS.stop();
       const t0 = performance.now();
+      // Prefer the game's own timer (stays in sync even if the game runs slow);
+      // fall back to wall-clock time if the HUD timer isn't found.
+      const hud = document.querySelector(".center .time p");
+      const gameMs = () => {
+        const m = /(\d+):(\d+)\.(\d+)/.exec(hud.textContent);
+        return m ? (+m[1] * 60 + +m[2]) * 1000 + +m[3] : 0;
+      };
       let i = 0;
       const tick = () => {
-        const t = performance.now() - t0;
+        const t = hud && i > 0 ? gameMs() : performance.now() - t0;
         while (i < seq.length && seq[i][0] <= t) fire(seq[i][1], seq[i++][2]);
         if (i < seq.length) raf = requestAnimationFrame(tick);
         else console.log("[TAS] finished");

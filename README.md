@@ -10,7 +10,7 @@ recording. Regenerate it any time (needs only Python 3):
 
     python3 tools/fetch_replay.py 1 inputs/summer1.json   # arg 1 = leaderboard rank
 
-Not yet tested in the live game. Event times are in ms from race start
+**Tested in headless Chromium: it does NOT complete the run.** The game accepts the inputs, but the car drifts off the track and crashes (0/3 checkpoints), both with wall-clock timing and with the game-timer timing `tas.js` now uses. Event times are in ms from race start
 (1 recording frame = 1 ms).
 
 ## Use
