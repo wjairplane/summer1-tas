@@ -21,6 +21,11 @@ const toEvents = L => { const ev = []; for (const k of ['up', 'right', 'down', '
 const bitsToLists = bits => { const L = { up: [], right: [], down: [], left: [], reset: [] }; for (const k in BIT) { let on = false; for (let f = 0; f < bits.length; f++) { const b = !!(bits[f] & BIT[k]); if (b !== on) { L[k].push(f); on = b; } } } return L; };
 
 const CONFIGS = [
+  // fine late-section beams (use with BSTART, e.g. BSTART=14000)
+  { name: 'l10', BLOCK: 10, K: 200, BIN_POS: 1.0, BIN_DIR: 0.05 },
+  { name: 'l10fine', BLOCK: 10, K: 200, BIN_POS: 0.5, BIN_DIR: 0.03 },
+  { name: 'l5', BLOCK: 5, K: 150, BIN_POS: 1.0, BIN_DIR: 0.05 },
+  { name: 'l15', BLOCK: 15, K: 250, BIN_POS: 1.0, BIN_DIR: 0.05 },
   { name: 'b20', BLOCK: 20, K: 150, BIN_POS: 1.0, BIN_DIR: 0.05 },
   { name: 'b15', BLOCK: 15, K: 120, BIN_POS: 1.0, BIN_DIR: 0.05 },
   { name: 'b25', BLOCK: 25, K: 180, BIN_POS: 1.0, BIN_DIR: 0.05 },
@@ -59,7 +64,15 @@ async function beamChild(cfg, refFile) {
   const segsRef = (t, len) => { const s = []; for (let f = t; f < t + len; f++) { const b = refBits[Math.min(f, N - 1)]; if (s.length && s[s.length - 1][0] === b) s[s.length - 1][1]++; else s.push([b, 1]); } return s; };
 
   let beam = [{ id: 0, t: 0, pos: [P[0], P[1], P[2]], parent: null, segs: null, refT: 0, isRef: true }];
-  let nextId = 1, bestFin = null, step = 0, totalLeaks = 0;
+  // BSTART=<frame>: play the reference exactly up to that frame, then branch (late-section search)
+  const BSTART = +(process.env.BSTART || 0);
+  if (BSTART > 0) {
+    const { res } = await sim.raw({ op: 'bExpand', jobs: [{ pid: 0, cid: 1, segs: segsRef(0, BSTART) }] });
+    const r = res[0];
+    beam = [{ id: 1, t: r.frames, pos: r.pos, speed: r.speed, cp: r.cp, parent: beam[0], segs: segsRef(0, BSTART), refT: r.frames, isRef: true }];
+    await sim.raw({ op: 'bKeep', ids: [1] });
+  }
+  let nextId = 2, bestFin = null, step = 0, totalLeaks = 0;
   const t0 = Date.now();
   while (beam.length) {
     step++;
@@ -144,7 +157,7 @@ if (process.argv[2] === 'child') {
 }
 
 const refFile = process.argv[2] || 'inputs/summer1_opt.json', outFile = process.argv[3] || 'inputs/summer1_beam.json';
-const only = process.env.CONFIGS ? process.env.CONFIGS.split(',') : null;
+const only = process.env.CONFIGS ? process.env.CONFIGS.split(',') : ['b20', 'b15', 'b25', 'b20fine'];
 (async () => {
   const cfgs = CONFIGS.filter(c => !only || only.includes(c.name));
   const results = await Promise.all(cfgs.map(cfg => new Promise(res => {
