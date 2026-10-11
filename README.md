@@ -18,9 +18,9 @@ after the page is open.
 - **Headless:** `npm i playwright && node tools/run_headless.js` (prints the
   final time, saves `result.png`).
 
-## Optimized run (22.077s)
+## Optimized run (22.067s)
 
-`inputs/summer1_opt.json` / `tas-exact-opt.user.js` finish in **22.077s**, 37 ms faster than
+`inputs/summer1_opt.json` / `tas-exact-opt.user.js` finish in **22.067s**, 47 ms faster than
 the replayed #1 (22.114s). Verified in the real game in headless Chromium. Found with
 `tools/optimize.js`, `tools/optimize2.js` and mostly `tools/evolve.js`
 (an evolutionary search: population, selection, mutation, crossover; hill-climb over tap timings using the game's own physics worker run
