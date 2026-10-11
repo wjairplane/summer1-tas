@@ -6,7 +6,7 @@
 //            collects checkpoint TARGET (reference arrival - candidate arrival, in ms) plus a
 //            small bonus for arriving faster.
 // The best full input set (window inputs + shifted reference tail) is written to OUT.
-// usage: node tools/segment.js <ref.json> <minutes> <out.json> [W0=0] [W1=5300] [TARGET=2] [NK=3]
+// usage: node tools/segment.js <ref.json> <minutes> <out.json> [W0=0] [W1=5300] [TARGET=2 (4 = finish)] [NK=3]
 const { fork } = require('child_process'), fs = require('fs');
 const { createSim } = require('./sim.js');
 const KEY = { KeyW: 'up', KeyD: 'right', KeyS: 'down', KeyA: 'left', Reset: 'reset' };
@@ -29,7 +29,7 @@ if (process.argv[2] === 'child') {
         ref = m.ref; const b = await sim.setBase(ref, 30000);
         P = b.P; V = b.V; C = b.C; N = b.frames + 3000;
         refBits = new Uint8Array(N); for (const k of KEYS) { let on = false, i = 0; const a = ref[k]; for (let f = 0; f < N; f++) { while (i < a.length && a[i] <= f) { on = !on; i++; } if (on) refBits[f] |= BIT[k]; } }
-        refCp = 0; for (let f = 1; f < C.length; f++) if (C[f] >= m.target) { refCp = f; break; }
+        refCp = 0; if (m.target >= 4) refCp = b.frames; else for (let f = 1; f < C.length; f++) if (C[f] >= m.target) { refCp = f; break; }   // target 4 = finish
         process.send({ id: m.id, refCp, refSpeed: V[refCp] });
         return;
       }
@@ -54,11 +54,12 @@ if (process.argv[2] === 'child') {
       for (let f = m.w1 + 1; f < N; f++) bits[f] = refBits[Math.max(0, Math.min(N - 1, f + lead))];
       const full = { up: [], right: [], down: [], left: [], reset: [] };
       for (const k of KEYS) { let on = false; for (let f = 0; f < N; f++) { const b = !!(bits[f] & BIT[k]); if (b !== on) { full[k].push(f); on = b; } } }
-      const r = await sim.evalFrom(full, Math.min(firstDiff(ref, full), m.w1), refCp + 1500, 0, m.target);
+      const r = await sim.evalFrom(full, Math.min(firstDiff(ref, full), m.w1), refCp + 1500, 0, m.target >= 4 ? 0 : m.target);
+      const reached = m.target >= 4 ? r.fin : r.cp >= m.target;
       let fit;
-      if (r.cp >= m.target) fit = (refCp - r.frames) + SPEED_W * (r.speed - V[refCp]);
+      if (reached) fit = (refCp - r.frames) + SPEED_W * (r.speed - V[refCp]);
       else fit = -1000 - (refCp + 1500 - r.frames) / 10;
-      process.send({ id: m.id, fit, lead, arrival: r.cp >= m.target ? r.frames : null, full });
+      process.send({ id: m.id, fit, lead, arrival: reached ? r.frames : null, full });
     });
     process.send({ ready: true });
   })();
