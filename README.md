@@ -18,6 +18,14 @@ after the page is open.
 - **Headless:** `npm i playwright && node tools/run_headless.js` (prints the
   final time, saves `result.png`).
 
+## Optimized run (22.102s)
+
+`inputs/summer1_opt.json` / `tas-exact-opt.user.js` finish in **22.102s**, 12 ms faster than
+the replayed #1 (22.114s). Verified in the real game in headless Chromium. Found with
+`tools/optimize.js` (hill-climb over tap timings using the game's own physics worker run
+offline in Node, with snapshot-and-resume so late-run edits cost ~18 ms instead of ~400 ms).
+Setup: `tools/fetch_sim_assets.sh`, then `node tools/optimize.js [minutes] [in] [out]`.
+
 ## Files
 
 - `tools/fetch_replay.py [rank] [out]` – downloads a leaderboard recording and
@@ -32,5 +40,7 @@ after the page is open.
 - Tied times: ranks 1 and 2 are both 22.114s; the first listed is used.
 - Patching depends on the game's current version (0.6.3). If the game updates,
   the script warns `patch anchor not found` and runs unpatched.
-- A completed run may be submitted to the online leaderboard by the game as
-  usual. Don't run this on an account where you don't want a copied score.
+- **Leaderboard:** the game submits finished runs as usual. During development my
+  test runs of the replay and the optimized run were not blocked from submitting,
+  so a TAS score may have been posted under an anonymous account. `run_headless.js`
+  now blocks submission, but the userscript does not: use it only where you accept that.

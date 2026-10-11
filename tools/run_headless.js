@@ -3,6 +3,8 @@ const { chromium } = require('playwright');
 (async () => {
   const b = await chromium.launch({ args: ['--use-angle=swiftshader','--use-gl=angle','--enable-unsafe-swiftshader','--ignore-gpu-blocklist','--no-sandbox'] });
   const p = await b.newPage({ viewport: { width: 1280, height: 720 } });
+  // never submit TAS runs to the online leaderboard
+  await p.route(/vps\.kodub\.com\/.*\/leaderboard(\?|$)/, r => r.request().method() === 'POST' ? r.abort() : r.continue());
   await p.addInitScript({ path: __dirname + '/../tas-exact.user.js' });
   await p.goto('https://app-polytrack.kodub.com/0.6.3/', { waitUntil: 'load' });
   await p.waitForTimeout(6000);
