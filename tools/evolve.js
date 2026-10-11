@@ -11,7 +11,7 @@
 //    and time-cut crossover between two parents.
 //  - When the best individual is ahead of the reference and its real finish frame is not
 //    worse, it becomes the new reference and is written to the output file.
-// usage: [SEED=start.json] node tools/evolve.js [minutes=10] [in] [out]
+// usage: [SEED=start.json] [WIN=a,b] [THROTTLE=1] node tools/evolve.js [minutes=10] [in] [out]
 const { fork } = require('child_process'), fs = require('fs');
 const { createSim } = require('./sim.js');
 const KEY = { KeyW: 'up', KeyD: 'right', KeyS: 'down', KeyA: 'left', Reset: 'reset' };
@@ -40,6 +40,10 @@ const seed = { up: [], right: [], down: [], left: [], reset: [] };
 for (const [f, k] of JSON.parse(fs.readFileSync(inFile))) seed[KEY[k]].push(f);
 for (const k in seed) seed[k].sort((a, b) => a - b);
 const STEER = ['right', 'left', 'down'];
+// WIN=a,b restricts mutations to frames [a,b); THROTTLE=1 also mutates W (inserts/moves short throttle lifts)
+const WIN = process.env.WIN ? process.env.WIN.split(',').map(Number) : null;
+const THROTTLE = !!process.env.THROTTLE;
+const clampWin = (a, b) => { if (!WIN) return [a, b]; const lo = Math.max(a, WIN[0]), hi = Math.min(b, WIN[1]); return lo < hi ? [lo, hi] : [WIN[0], WIN[1]]; };
 const clone = L => Object.fromEntries(Object.entries(L).map(([k, v]) => [k, v.slice()]));
 const rnd = n => Math.floor(Math.random() * n), pick = a => a[rnd(a.length)];
 const valid = L => ['up', 'right', 'down', 'left'].every(k => L[k].every((f, i) => (i === 0 ? f >= (k === 'up' ? 0 : 1) : f > L[k][i - 1])));
@@ -59,21 +63,25 @@ const firstDiff = (A, B) => {
 
 // ---- mutation operators ----
 function small(L, a, b) {                          // edit one toggle/tap inside [a,b)
-  const M = clone(L), k = pick(STEER), l = M[k];
-  const idx = []; l.forEach((f, i) => { if (f >= a && f < b) idx.push(i); });
+  [a, b] = clampWin(a, b);
+  const k = THROTTLE && Math.random() < 0.3 ? 'up' : pick(STEER);
+  const M = clone(L), l = M[k];
+  const idx = []; l.forEach((f, i) => { if (f >= a && f < b && !(k === 'up' && i === 0)) idx.push(i); });
   const d = pick([-1, 1, -2, 2, -4, 4, -8, 8, -16, 16, -32, 32]);
-  if (!idx.length || Math.random() < 0.1) { const t = a + rnd(Math.max(1, b - a)), w = 10 + rnd(60); l.push(t, t + w); l.sort((x, y) => x - y); }
+  // for W the list starts "on" at frame 0, so a lift is the pair (odd, even) = (release, press)
+  const partner = i => k === 'up' ? (i % 2 ? i + 1 : i - 1) : (i ^ 1);
+  if (!idx.length || Math.random() < 0.1) { const t = a + rnd(Math.max(1, b - a)), w = k === 'up' ? 3 + rnd(40) : 10 + rnd(60); l.push(t, t + w); l.sort((x, y) => x - y); }
   else {
-    const i = pick(idx), r = Math.random();
+    const i = pick(idx), r = Math.random(), j = partner(i);
     if (r < 0.6) l[i] += d;
-    else if (r < 0.9) { const j = i ^ 1; if (j < l.length) { l[i] += d; l[j] += d; } }
-    else if (l.length > 2) l.splice(i - (i % 2), 2);
+    else if (r < 0.9) { if (j > 0 && j < l.length) { l[i] += d; l[j] += d; } }
+    else if (j > 0 && j < l.length && l.length > 2) l.splice(Math.min(i, j), 2);
   }
   return M;
 }
 function big(L) {
   const M = clone(L), r = Math.random();
-  const a = 300 + rnd(20500), len = 200 + rnd(1500), b = a + len, inR = f => f >= a && f < b;
+  const a = WIN ? WIN[0] + rnd(Math.max(1, WIN[1] - WIN[0] - 200)) : 300 + rnd(20500), len = 200 + rnd(1500), b = WIN ? Math.min(WIN[1], a + len) : a + len, inR = f => f >= a && f < b;
   if (r < 0.35) {
     const d = pick([-150, -100, -60, -40, -25, 25, 40, 60, 100, 150]);
     for (const k of STEER) M[k] = M[k].map(f => inR(f) ? f + d : f);
