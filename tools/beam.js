@@ -59,7 +59,7 @@ async function beamChild(cfg, refFile) {
   const segsRef = (t, len) => { const s = []; for (let f = t; f < t + len; f++) { const b = refBits[Math.min(f, N - 1)]; if (s.length && s[s.length - 1][0] === b) s[s.length - 1][1]++; else s.push([b, 1]); } return s; };
 
   let beam = [{ id: 0, t: 0, pos: [P[0], P[1], P[2]], parent: null, segs: null, refT: 0, isRef: true }];
-  let nextId = 1, bestFin = null, step = 0;
+  let nextId = 1, bestFin = null, step = 0, totalLeaks = 0;
   const t0 = Date.now();
   while (beam.length) {
     step++;
@@ -71,7 +71,15 @@ async function beamChild(cfg, refFile) {
       const segs = a === 'ref' ? segsRef(nd.isRef ? nd.t : Math.max(0, Math.round(nd.refT)), BLOCK) : [[a, BLOCK]];
       const cid = nextId++; jobs.push({ pid: nd.id, cid, segs }); meta.push({ parent: nd, segs, isRef: nd.isRef && a === 'ref' });
     }
-    const { res } = await sim.raw({ op: 'bExpand', jobs });
+    // expand, then check for heap pages outside the snapshot set; if any appeared this step,
+    // they were added to every snapshot (exactly) and the step is re-run so no child is contaminated
+    let res, leaks = 0;
+    for (;;) {
+      ({ res } = await sim.raw({ op: 'bExpand', jobs }));
+      const lk = await sim.raw({ op: 'bLeak' });
+      if (!lk.leak.length) break;
+      leaks += lk.leak.length; totalLeaks += lk.leak.length;
+    }
     const bins = new Map(); let refNode = null; const why = { off: 0, dy: 0, slow: 0, cp: 0, ok: 0 }, prevTop = beam[0]; let topKid = null;
     res.forEach((r, i) => {
       const nd = { id: r.cid, t: r.frames, pos: r.pos, speed: r.speed, cp: r.cp, parent: meta[i].parent, segs: meta[i].segs, isRef: meta[i].isRef };
@@ -112,9 +120,8 @@ async function beamChild(cfg, refFile) {
       process.send({ log: `DEBUG top t=${n.t} refT=${n.refT.toFixed(1)} pos=${n.pos.map(x => x.toFixed(2)).join(',')} speed=${n.speed.toFixed(1)} cp=${n.cp} | ref@refT=${q(j)} ref@t=${q(n.t)} refSpeed@t=${V[n.t].toFixed(1)} | ahead history (t:ms) ${chainT.slice(0, 60).reverse().join(' ')}` });
     }
     if (step % 50 === 0) {
-      const lk = await sim.raw({ op: 'bLeak' });
       const top = beam[0];
-      process.send({ log: `[${cfg.name}] t=${top ? top.t : '-'} beam=${beam.length} lines=${new Set(beam.map(n => n.coarse)).size} top ahead=${top ? (top.refT - top.t).toFixed(2) : '-'}ms score=${top ? top.score.toFixed(2) : '-'} ref=${beam.some(n => n.isRef) ? 'kept' : 'lost'} ${lk.leak.length ? 'LEAK ' + lk.leak.length + ' pages' : ''} ${((Date.now() - t0) / 1000).toFixed(0)}s` });
+      process.send({ log: `[${cfg.name}] t=${top ? top.t : '-'} beam=${beam.length} lines=${new Set(beam.map(n => n.coarse)).size} top ahead=${top ? (top.refT - top.t).toFixed(2) : '-'}ms score=${top ? top.score.toFixed(2) : '-'} ref=${beam.some(n => n.isRef) ? 'kept' : 'lost'} ${totalLeaks ? 'pages added ' + totalLeaks : ''} ${bestFin ? 'best finish so far ' + bestFin.t : ''} ${((Date.now() - t0) / 1000).toFixed(0)}s` });
     }
     if (bestFin && beam.length && beam[0].t > bestFin.t) break;
   }
@@ -125,7 +132,7 @@ async function beamChild(cfg, refFile) {
 }
 
 if (process.argv[2] === 'child') {
-  process.on('message', async m => { const r = await beamChild(m.cfg, m.ref); process.send({ result: r }); });
+  process.on('message', async m => { try { process.send({ result: await beamChild(m.cfg, m.ref) }); } catch (e) { process.send({ result: { name: m.cfg.name, finish: null, error: String(e && e.stack || e).slice(0, 300) } }); } });
   return;
 }
 
@@ -135,14 +142,16 @@ const only = process.env.CONFIGS ? process.env.CONFIGS.split(',') : null;
   const cfgs = CONFIGS.filter(c => !only || only.includes(c.name));
   const results = await Promise.all(cfgs.map(cfg => new Promise(res => {
     const c = fork(__filename, ['child'], { serialization: 'advanced' });
-    c.on('message', m => { if (m.log) console.log(m.log); if (m.result) { res(m.result); c.kill(); } });
+    let done = false;
+    c.on('message', m => { if (m.log) console.log(m.log); if (m.result) { done = true; res(m.result); c.kill(); } });
+    c.on('exit', code => { if (!done) res({ name: cfg.name, finish: null, error: 'exited ' + code }); });
     c.send({ cfg, ref: refFile });
   })));
   // verify each result with the game's own clean recording path (no snapshots involved)
   const sim = await createSim();
   let best = null;
   for (const r of results) {
-    if (!r.finish) { console.log(`${r.name}: no finish`); continue; }
+    if (!r.finish) { console.log(`${r.name}: no finish${r.error ? ' (' + r.error + ')' : ''}`); continue; }
     const L = { up: [], right: [], down: [], left: [], reset: [] }; for (const [f, k] of r.events) L[KEY[k]].push(f);
     const v = await sim.run(encodeRecording(L), 30000);
     console.log(`${r.name}: beam finish ${r.finish}, clean re-simulation ${v.frames}`);

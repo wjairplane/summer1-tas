@@ -43,10 +43,12 @@ function __beam(m){
   }
   if(m.op==="bKeep"){const keep=new Set(m.ids);for(const k of [...__B.states.keys()])if(!keep.has(k))__B.states.delete(k);return{n:__B.states.size}}
   if(m.op==="bLeak"){ // pages outside D that differ from the post-init heap = pages the snapshots miss
-    const H=t.HEAPU8,Z=__S.zero,P=__B.PG,inD=new Set(__B.D),leak=[];
-    for(let pg=0;pg*P<Z.length;pg++){if(inD.has(pg))continue;const o=pg*P;for(let i=o;i<o+P;i++)if(H[i]!==Z[i]){leak.push(pg);break}}
-    if(leak.length){ // extend D; existing snapshots get the untouched (post-init) content for the new pages
-      for(const [id,st] of __B.states){const ns=new Uint8Array((__B.D.length+leak.length)*P);ns.set(st.snap);leak.forEach((pg,i)=>ns.set(Z.subarray(pg*P,pg*P+P),(__B.D.length+i)*P));st.snap=ns}
+    const P=__B.PG,inD=new Uint8Array(Math.ceil(__S.zero.length/P));for(const pg of __B.D)inD[pg]=1;
+    const H=new Int32Array(t.HEAPU8.buffer,0,__S.zero.length>>2),Z=new Int32Array(__S.zero.buffer,__S.zero.byteOffset,__S.zero.length>>2),W=P>>2,leak=[];
+    for(let pg=0;pg<inD.length;pg++){if(inD[pg])continue;const o=pg*W;for(let i=o;i<o+W;i++)if(H[i]!==Z[i]){leak.push(pg);break}}
+    if(leak.length){ // extend D; stored snapshots never touched these pages (checked every step), so post-init content is exact
+      const Zb=__S.zero;
+      for(const [id,st] of __B.states){const ns=new Uint8Array((__B.D.length+leak.length)*P);ns.set(st.snap);leak.forEach((pg,i)=>ns.set(Zb.subarray(pg*P,pg*P+P),(__B.D.length+i)*P));st.snap=ns}
       __B.D=__B.D.concat(leak);
     }
     return{leak};
