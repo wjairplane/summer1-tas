@@ -4,7 +4,7 @@ const __S={snaps:new Map(),K:1000,zero:null};
 const __KEYS=["up","right","down","left","reset"];
 function __pos(b){const v=new DataView(b);const u=new Uint8Array(b);const o=(u[11]&2)?17:14;return[v.getFloat32(o,!0),v.getFloat32(o+4,!0),v.getFloat32(o+8,!0)]}
 function __cp(b){const u=new Uint8Array(b);return new DataView(b).getUint16((u[11]&2)?15:12,!0)}
-function __go(L,h,cap,record,sample){
+function __go(L,h,cap,record,sample,cpStop){
   const idx={},ctl={};let last=null;
   const S=sample?[]:null;
   const P=record?new Float32Array(3*(cap+1)):null,V=record?new Float32Array(cap+1):null,C=record?new Uint16Array(cap+1):null;
@@ -13,11 +13,12 @@ function __go(L,h,cap,record,sample){
     const f=h.frames;
     for(const k of __KEYS){const a=L[k];let i=idx[k];while(i<a.length&&a[i]<=f)i++;idx[k]=i;ctl[k]=(i&1)==1}
     const b=n(h,ctl);h.hasFinished=Xo(new Uint8Array(b));h.frames++;last=b;
+    if(cpStop&&__cp(b)>=cpStop)break;
     if(sample&&h.frames%sample==0)S.push(h.frames,...__pos(b));
     if(record){const p=__pos(b);P.set(p,3*h.frames);V[h.frames]=new DataView(b).getFloat32(7,!0);C[h.frames]=__cp(b);
       if(h.frames%__S.K==0&&!h.hasFinished)__S.snaps.set(h.frames,new Uint8Array(t.HEAPU8));}
   }
-  const r={op:"res",frames:h.frames,fin:h.hasFinished,last:new Uint8Array(last),pos:__pos(last),speed:new DataView(last).getFloat32(7,!0)};
+  const r={op:"res",frames:h.frames,fin:h.hasFinished,last:new Uint8Array(last),pos:__pos(last),speed:new DataView(last).getFloat32(7,!0),cp:__cp(last)};
   if(sample)r.S=S;
   if(record){r.P=P.subarray(0,3*(h.frames+1));r.V=V.subarray(0,h.frames+1);r.C=C.subarray(0,h.frames+1)}
   return r;
@@ -79,6 +80,6 @@ function __custom(m){
   }else if(m.op==="eval"){
     let F=0;for(const k of __S.snaps.keys())if(k<=m.from&&k>F)F=k;
     t.HEAPU8.set(__S.snaps.get(F));
-    const r=__go(m.L,{id:0,hasFinished:false,frames:F},m.cap,false,m.sample||0);r.id=m.id;r.resumedFrom=F;postMessage(r);
+    const r=__go(m.L,{id:0,hasFinished:false,frames:F},m.cap,false,m.sample||0,m.cpStop||0);r.id=m.id;r.resumedFrom=F;postMessage(r);
   }
 }

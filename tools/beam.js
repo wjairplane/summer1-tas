@@ -112,6 +112,13 @@ async function beamChild(cfg, refFile) {
     beam = [...picked].sort((a, b) => b.score - a.score);
     if (refNode && !beam.includes(refNode)) beam[beam.length - 1 < K - 1 ? beam.length : K - 1] = refNode;   // the reference line always survives
     await sim.raw({ op: 'bKeep', ids: beam.map(n => n.id) });
+    // BDUMP=<frame>:<file>: save the leading line's inputs once it passes <frame> (seed for tools/landing.js)
+    if (process.env.BDUMP && beam[0] && !globalThis.__dumped) { const [ft, file] = process.env.BDUMP.split(':'); if (beam[0].t >= +ft) {
+      globalThis.__dumped = 1; const n = beam[0], chain = []; for (let a = n; a.parent; a = a.parent) chain.push(a.segs);
+      const bits = []; for (const sg of chain.reverse()) for (const [b, len] of sg) for (let k = 0; k < len; k++) bits.push(b);
+      fs.writeFileSync(file, JSON.stringify({ t: n.t, ahead: n.refT - n.t, pos: n.pos, speed: n.speed, cp: n.cp, bits }));
+      process.send({ log: `[${cfg.name}] dumped leading line at t=${n.t} (ahead ${(n.refT - n.t).toFixed(1)} ms, ${n.speed.toFixed(0)} km/h) -> ${file}` });
+      if (process.env.BDUMP_EXIT) return { name: cfg.name, finish: null, error: 'dump only' }; } }
     if (process.env.BTRACE) { const [a, b] = process.env.BTRACE.split('-').map(Number); if (prevTop && prevTop.t >= a && prevTop.t <= b && step % 2 === 0) {
       const k = topKid; process.send({ log: `TRACE t=${prevTop.t} top ahead=${(prevTop.refT - prevTop.t).toFixed(1)} speed=${(prevTop.speed||0).toFixed(0)} cp=${prevTop.cp} | its furthest child: ${k ? `ahead=${(k.refT - k.t).toFixed(1)} off=${k.off.toFixed(1)} dy=${k.dy.toFixed(1)} v=${k.speed.toFixed(0)} cp=${k.cp} pos=${k.pos.map(x => x.toFixed(1))}` : 'none'} | all children: ${JSON.stringify(why)}` }); } }
     if (process.env.BDEBUG && beam[0] && beam[0].t >= +process.env.BDEBUG && !globalThis.__dbg) {
