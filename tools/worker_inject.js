@@ -19,7 +19,7 @@ function __go(L,h,cap,record,sample,cpStop){
     if(cpStop&&__cp(b)>=cpStop)break;
     if(sample&&h.frames%sample==0)S.push(h.frames,...__pos(b));
     if(record){const p=__pos(b);P.set(p,3*h.frames);V[h.frames]=new DataView(b).getFloat32(7,!0);C[h.frames]=__cp(b);
-      if(h.frames%__S.K==0&&!h.hasFinished)__S.snaps.set(h.frames,new Uint8Array(t.HEAPU8));}
+      if((h.frames%__S.K==0||(__S.K2&&h.frames>=__S.K2from&&h.frames%__S.K2==0))&&!h.hasFinished)__S.snaps.set(h.frames,new Uint8Array(t.HEAPU8));}
   }
   }catch(e){if(sp!==null)self.__wx.u(sp);crashed=String(e&&e.message||e).slice(0,120)}
   // a physics trap, or no frame simulated (cap <= start): report a far-away, unfinished state instead of throwing
@@ -109,6 +109,7 @@ function __custom(m){
     __S.zero=new Uint8Array(t.HEAPU8);__S.snaps.set(0,__S.zero);
     postMessage({op:"init",heap:t.HEAPU8.length});
   }else if(m.op==="setBase"){
+    __S.K2=m.K2||0;__S.K2from=m.K2from||0;   // optional denser snapshots (every K2 frames from K2from)
     __S.snaps.clear();__S.snaps.set(0,__S.zero);t.HEAPU8.set(__S.zero);
     const r=__go(m.L,{id:0,hasFinished:false,frames:0},m.cap,true);r.id=m.id;postMessage(r);
   }else if(m.op==="quatProbe"){
