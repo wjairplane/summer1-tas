@@ -85,6 +85,15 @@ const firstDiff = (A, B) => { let m = 1e9; for (const k in NAME) { const a = A[k
       if (curS > bestS + 1e-6) { best = clone(cur); bestS = curS; }
     }
     if (bestS > before + 1e-6) sweepDry = false;
+    // SHARE=<dir>: parallel searches post their best line there and adopt a better one (same start line)
+    if (process.env.SHARE) {
+      const dir = process.env.SHARE, me = `${dir}/${process.pid}.json`;
+      fs.writeFileSync(me + '.tmp', JSON.stringify({ s: bestS, F, ev: toEv(best) })); fs.renameSync(me + '.tmp', me);
+      for (const f of fs.readdirSync(dir)) { if (!f.endsWith('.json') || `${dir}/${f}` === me) continue;
+        try { const o = JSON.parse(fs.readFileSync(`${dir}/${f}`)); if (o.F === F && o.s > bestS + 0.001) {
+          const L = { up: [], right: [], down: [], left: [], reset: [] }; for (const [fr, k] of o.ev) L[KEY[k]].push(fr); for (const k in L) L[k].sort((a, b) => a - b);
+          best = L; bestS = o.s; sweepDry = false; console.log(`adopted ${f} (+${((o.s - before) * 1000).toFixed(1)} mm)`); } } catch (e) {} }
+    }
     console.log(`[${((Date.now() - t0) / 1000).toFixed(0)}s] annealing done, ${n} tests, ${((bestS - s0) * 1000).toFixed(1)} mm gained`);
   }
   fs.writeFileSync(outF.replace(/\.json$/, '_last.json'), JSON.stringify(toEv(best)));
