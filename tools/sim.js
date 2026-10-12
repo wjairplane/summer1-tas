@@ -28,6 +28,16 @@ async function createSim() {
   const asBrowser = fn => { Object.defineProperty(g, 'process', { value: undefined, configurable: true, writable: true }); try { return fn(); } finally { Object.defineProperty(g, 'process', { value: realProcess, configurable: true, writable: true }); } };
   g.importScripts = f => asBrowser(() => vm.runInThisContext(fs.readFileSync(path.join(A, 'polytrack_physics.js'), 'utf8')));
   g.fetch = async () => ({ ok: true, status: 200, arrayBuffer: async () => { const b = fs.readFileSync(path.join(A, 'polytrack_physics.wasm')); return b.buffer.slice(b.byteOffset, b.byteOffset + b.length); } });
+  // keep the wasm exports (stackSave = w, stackRestore = u) so a trapped step can reset the stack pointer
+  if (!WebAssembly.__tasWrapped) {
+    const wi = WebAssembly.instantiate;
+    WebAssembly.instantiate = async (...a) => {
+      const r = await wi.apply(WebAssembly, a), ex = (r.instance || r).exports;
+      if (typeof ex.u === 'function' && typeof ex.w === 'function' && typeof ex.r === 'function') g.__wx = ex;   // the physics module (a maths module is loaded too)
+      return r;
+    };
+    WebAssembly.__tasWrapped = true;
+  }
   let resolveNext;
   const waiters = new Map();
   g.postMessage = m => { if (m.op) { const key = m.id !== undefined ? m.id : m.op; const w = waiters.get(key); if (w) { waiters.delete(key); w(m); } return; } if (m.messageType === 8 && resolveNext) { const r = resolveNext; resolveNext = null; r(m); } };

@@ -75,7 +75,7 @@ async function beamChild(cfg, refFile) {
     beam = [{ id: 1, t: r.frames, pos: r.pos, speed: r.speed, cp: r.cp, parent: beam[0], segs: segsRef(0, BSTART), refT: r.frames, isRef: true }];
     await sim.raw({ op: 'bKeep', ids: [1] });
   }
-  let nextId = 2, bestFin = null, step = 0, totalLeaks = 0; const finishers = [];
+  let nextId = 2, bestFin = null, step = 0, totalLeaks = 0, totalCrashes = 0; const finishers = [];
   const t0 = Date.now();
   while (beam.length) {
     step++;
@@ -89,6 +89,8 @@ async function beamChild(cfg, refFile) {
     }
     // expand, then check for heap pages outside the snapshot set; if any appeared this step,
     // they were added to every snapshot (exactly) and the step is re-run so no child is contaminated
+    // a child that crashes (wasm trap) is reported with .err; after a leak re-run, a child
+    // that still crashes is a genuinely broken state and is dropped
     let res, leaks = 0;
     for (;;) {
       ({ res } = await sim.raw({ op: 'bExpand', jobs }));
@@ -96,15 +98,20 @@ async function beamChild(cfg, refFile) {
       if (!lk.leak.length) break;
       leaks += lk.leak.length; totalLeaks += lk.leak.length;
     }
+    const errs = res.filter(r => r.err);
+    if (errs.length) { totalCrashes += errs.length; process.send({ log: `[${cfg.name}] step ${step}: dropped ${errs.length} crashed children (${errs[0].err})` }); }
     const bins = new Map(); let refNode = null; const why = { off: 0, dy: 0, slow: 0, cp: 0, ok: 0 }, prevTop = beam[0]; let topKid = null;
     res.forEach((r, i) => {
+      if (r.err) return;
       const nd = { id: r.cid, t: r.frames, pos: r.pos, speed: r.speed, cp: r.cp, parent: meta[i].parent, segs: meta[i].segs, isRef: meta[i].isRef };
       if (r.fin) { finishers.push(nd); if (!bestFin || r.frames < bestFin.t) bestFin = nd; return; }
       // progress is continuous: the match point can only move a little from the parent's
       // (stops matches jumping to another part of the track that passes nearby)
       const adv = nd.t - nd.parent.t, pr = project(r.pos, nd.parent.refT + 0.3 * adv, nd.parent.refT + 1.7 * adv);
       if (process.env.BTRACE && nd.parent === prevTop && (!topKid || pr.refT > topKid.refT)) topKid = { refT: pr.refT, off: pr.off, dy: pr.dy, speed: r.speed, cp: r.cp, pos: r.pos, t: nd.t };
-      if (pr.off > DEAD_OFF) { why.off++; return; } if (pr.dy < -8 || pr.dy > 80) { why.dy++; return; }   // well below the track = fell off; far above = flying (allowed) if (pr.refT < nd.t - 1500) { why.slow++; return; }           // left the course / hopelessly slow
+      if (pr.off > DEAD_OFF) { why.off++; return; }
+      if (pr.dy < -8 || pr.dy > 80) { why.dy++; return; }             // well below the track = fell off; far above = flying (allowed)
+      if (pr.refT < nd.t - 1500) { why.slow++; return; }              // left the course / hopelessly slow
       // a state that is past a reference checkpoint position (with margin) but has not collected it skipped it
       if (nd.cp < C[Math.max(0, Math.min(C.length - 1, Math.floor(pr.refT) - 30))]) { why.cp++; return; }
       why.ok++;

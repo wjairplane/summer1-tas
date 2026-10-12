@@ -15,8 +15,9 @@ after the page is open.
 - **Browser:** install it as a userscript (Tampermonkey/Violentmonkey, runs at
   document-start on `app-polytrack.kodub.com`), open Summer 1, press W once to
   start. The TAS takes over from there.
-- **Headless:** `npm i playwright && node tools/run_headless.js` (prints the
-  final time, saves `result.png`).
+- **Headless:** `npm i playwright && node tools/run_headless.js [userscript]` (default
+  `tas-exact.user.js`; prints the final time and checkpoints, saves `result.png`;
+  leaderboard submission is blocked).
 
 ## Optimized run (22.067s)
 

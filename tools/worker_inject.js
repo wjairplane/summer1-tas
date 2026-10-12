@@ -33,13 +33,19 @@ function __beam(m){
   if(m.op==="bSetup"){t.HEAPU8.set(__S.zero);__B.D=m.D.slice();__B.states.clear();__B.states.set(0,{snap:__snapD(),frames:0,fin:false});return{ok:true,pages:__B.D.length}}
   if(m.op==="bExpand"){
     const out=[],ctl={up:false,right:false,down:false,left:false,reset:false};
+    const sp=self.__wx&&typeof self.__wx.w==="function"?self.__wx.w():null;   // stackSave: a wasm trap leaves the stack pointer where it was
     for(const j of m.jobs){
-      const st=__B.states.get(j.pid);__restD(st.snap);
-      const h={id:0,hasFinished:st.fin,frames:st.frames};let last=null;
-      for(const sg of j.segs){const b=sg[0];ctl.up=!!(b&1);ctl.right=!!(b&2);ctl.down=!!(b&4);ctl.left=!!(b&8);
-        for(let k=0;k<sg[1]&&!h.hasFinished;k++){last=n(h,ctl);h.hasFinished=Xo(new Uint8Array(last));h.frames++}}
-      __B.states.set(j.cid,{snap:__snapD(),frames:h.frames,fin:h.hasFinished});
-      out.push({cid:j.cid,frames:h.frames,fin:h.hasFinished,pos:__pos(last),speed:new DataView(last).getFloat32(7,!0),cp:__cp(last)});
+      try{
+        const st=__B.states.get(j.pid);__restD(st.snap);
+        const h={id:0,hasFinished:st.fin,frames:st.frames};let last=null;
+        for(const sg of j.segs){const b=sg[0];ctl.up=!!(b&1);ctl.right=!!(b&2);ctl.down=!!(b&4);ctl.left=!!(b&8);
+          for(let k=0;k<sg[1]&&!h.hasFinished;k++){last=n(h,ctl);h.hasFinished=Xo(new Uint8Array(last));h.frames++}}
+        __B.states.set(j.cid,{snap:__snapD(),frames:h.frames,fin:h.hasFinished});
+        out.push({cid:j.cid,frames:h.frames,fin:h.hasFinished,pos:__pos(last),speed:new DataView(last).getFloat32(7,!0),cp:__cp(last)});
+      }catch(e){ // usually a page outside D written by an earlier job of this step; the caller leak-checks and re-runs
+        if(sp!==null)self.__wx.u(sp);
+        out.push({cid:j.cid,err:String(e&&e.message||e).slice(0,120)});
+      }
     }
     return{res:out};
   }
