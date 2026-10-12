@@ -10,6 +10,8 @@ function __go(L,h,cap,record,sample,cpStop){
   const S=sample?[]:null;
   const P=record?new Float32Array(3*(cap+1)):null,V=record?new Float32Array(cap+1):null,C=record?new Uint16Array(cap+1):null;
   for(const k of __KEYS)idx[k]=0;
+  const sp=self.__wx&&typeof self.__wx.w==="function"?self.__wx.w():null;let crashed=null;
+  try{
   while(!h.hasFinished&&h.frames<cap){
     const f=h.frames;
     for(const k of __KEYS){const a=L[k];let i=idx[k];while(i<a.length&&a[i]<=f)i++;idx[k]=i;ctl[k]=(i&1)==1}
@@ -19,6 +21,10 @@ function __go(L,h,cap,record,sample,cpStop){
     if(record){const p=__pos(b);P.set(p,3*h.frames);V[h.frames]=new DataView(b).getFloat32(7,!0);C[h.frames]=__cp(b);
       if(h.frames%__S.K==0&&!h.hasFinished)__S.snaps.set(h.frames,new Uint8Array(t.HEAPU8));}
   }
+  }catch(e){if(sp!==null)self.__wx.u(sp);crashed=String(e&&e.message||e).slice(0,120)}
+  // a physics trap, or no frame simulated (cap <= start): report a far-away, unfinished state instead of throwing
+  if(crashed||!last){const r={op:"res",frames:h.frames,fin:false,last:null,pos:[1e9,1e9,1e9],speed:0,cp:0,err:crashed||"no frames simulated"};
+    if(sample)r.S=S;if(record){r.P=P.subarray(0,3*(h.frames+1));r.V=V.subarray(0,h.frames+1);r.C=C.subarray(0,h.frames+1)}return r}
   const r={op:"res",frames:h.frames,fin:h.hasFinished,last:new Uint8Array(last),pos:__pos(last),speed:new DataView(last).getFloat32(7,!0),cp:__cp(last)};
   if(sample)r.S=S;
   if(record){r.P=P.subarray(0,3*(h.frames+1));r.V=V.subarray(0,h.frames+1);r.C=C.subarray(0,h.frames+1)}
