@@ -39,6 +39,8 @@ const CONFIGS = [
 async function beamChild(cfg, refFile) {
   const { BLOCK, K, BIN_POS, BIN_DIR } = cfg;
   const SPEED_H = cfg.SPEED_H ?? 60, DEAD_OFF = 12;
+  // BDEAD=<m>,<frame>: after <frame> allow lines up to <m> metres off the reference line (e.g. a wide landing on the open plane)
+  const [DEAD_WIDE, DEAD_AFTER] = process.env.BDEAD ? process.env.BDEAD.split(',').map(Number) : [DEAD_OFF, 0];
   const sim = await createSim(); await sim.initFast();
   const ref = load(refFile);
   const base = await sim.setBase(ref, 30000);
@@ -129,7 +131,7 @@ async function beamChild(cfg, refFile) {
       // (stops matches jumping to another part of the track that passes nearby)
       const adv = nd.t - nd.parent.t, pr = project(r.pos, nd.parent.refT + 0.3 * adv, nd.parent.refT + 1.7 * adv);
       if (process.env.BTRACE && nd.parent === prevTop && (!topKid || pr.refT > topKid.refT)) topKid = { refT: pr.refT, off: pr.off, dy: pr.dy, speed: r.speed, cp: r.cp, pos: r.pos, t: nd.t };
-      if (pr.off > DEAD_OFF) { why.off++; return; }
+      if (pr.off > (DEAD_AFTER && nd.t > DEAD_AFTER ? DEAD_WIDE : DEAD_OFF)) { why.off++; return; }
       if (pr.dy < -8 || pr.dy > 80) { why.dy++; return; }             // well below the track = fell off; far above = flying (allowed)
       if (pr.refT < nd.t - 1500) { why.slow++; return; }              // left the course / hopelessly slow
       // a state that is past a reference checkpoint position (with margin) but has not collected it skipped it
