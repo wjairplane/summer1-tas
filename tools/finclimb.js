@@ -38,10 +38,14 @@ const firstDiff = (A, B) => { let m = 1e9; for (const k in NAME) { const a = A[k
     if (v.frames < F) { best = L; fs.writeFileSync(outF, JSON.stringify(toEv(best))); await rebase(); bestS = s0 = (await evalL(best, best)).s; console.log(`new best finish ${F}`); return true; }
     return false;
   };
-  const tryL = async L => { if (!valid(L)) return null; n++; const c = await evalL(L, best); if (c.fin && await found(L)) return 'gain'; return c; };
+  const seen = new Set(), keyOf = L => Object.keys(NAME).map(k => L[k].join(',')).join('|');
+  const tryL = async L => { if (!valid(L)) return null; const kk = keyOf(L); if (seen.has(kk)) return null; seen.add(kk); n++; const c = await evalL(L, best); if (c.fin && await found(L)) return 'gain'; return c; };
+  let sweepDry = false;
   while (left()) {
-    // 1) sweep: every toggle in the window, shifted +-1..5
+    // 1) sweep (skipped after a sweep that found nothing, until annealing moves the line)
     let improved = false;
+    if (!sweepDry) {
+    // sweep: every toggle in the window, shifted +-1..5
     for (const k in NAME) for (let i = 0; i < best[k].length && left(); i++) {
       if (best[k][i] < W0 || best[k][i] >= F) continue;
       for (const d of [-1, 1, -2, 2, -3, 3, -5, 5]) {
@@ -61,9 +65,12 @@ const firstDiff = (A, B) => { let m = 1e9; for (const k in NAME) { const a = A[k
     }
     console.log(`[${((Date.now() - t0) / 1000).toFixed(0)}s] sweep done, ${n} tests, ${((bestS - s0) * 1000).toFixed(1)} mm gained (1 frame ~ 84 mm)`);
     if (improved) continue;
+    sweepDry = true;
+    }
+    const before = bestS;
     // 3) annealing from the best line with random edits, then back to sweeping
     let cur = clone(best), curS = bestS, T = 0.004;
-    for (let it = 0; it < 3000 && left(); it++, T *= 0.999) {
+    for (let it = 0; it < 8000 && left(); it++, T *= 0.9995) {
       const L = clone(cur), k = ['right', 'right', 'right', 'left', 'up', 'down'][ri(6)], l = L[k], r = rnd();
       const idx = []; l.forEach((f, i) => { if (f >= W0 && f < F) idx.push(i); });
       const d = [-3, -2, -1, 1, 2, 3, -6, 6][ri(8)];
@@ -77,6 +84,7 @@ const firstDiff = (A, B) => { let m = 1e9; for (const k in NAME) { const a = A[k
       if (c.s > curS || rnd() < Math.exp((c.s - curS) / T)) { cur = L; curS = c.s; }
       if (curS > bestS + 1e-6) { best = clone(cur); bestS = curS; }
     }
+    if (bestS > before + 1e-6) sweepDry = false;
     console.log(`[${((Date.now() - t0) / 1000).toFixed(0)}s] annealing done, ${n} tests, ${((bestS - s0) * 1000).toFixed(1)} mm gained`);
   }
   fs.writeFileSync(outF.replace(/\.json$/, '_last.json'), JSON.stringify(toEv(best)));
