@@ -11,12 +11,12 @@
 //    and time-cut crossover between two parents.
 //  - When the best individual is ahead of the reference and its real finish frame is not
 //    worse, it becomes the new reference and is written to the output file.
-// usage: [SEED=start.json] [WIN=a,b] [THROTTLE=1] node tools/evolve.js [minutes=10] [in] [out]
+// usage: [NK=processes] [SEED=start.json] [WIN=a,b] [THROTTLE=1] node tools/evolve.js [minutes=10] [in] [out]
 const { fork } = require('child_process'), fs = require('fs');
 const { createSim } = require('./sim.js');
 const KEY = { KeyW: 'up', KeyD: 'right', KeyS: 'down', KeyA: 'left', Reset: 'reset' };
 const NAME = Object.fromEntries(Object.entries(KEY).map(([a, b]) => [b, a]));
-const NK = 4, POP = 24, EXPLORERS = 8, CHILDREN = 48, SAMPLE = 50, FINISH_MARGIN = 5, OFF_LINE = 4;
+const NK = +(process.env.NK || 4), POP = 24, EXPLORERS = 8, CHILDREN = 48, SAMPLE = 50, FINISH_MARGIN = 5, OFF_LINE = 4;
 
 if (process.argv[2] === 'child') {
   (async () => {

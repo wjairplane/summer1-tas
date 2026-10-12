@@ -9,7 +9,7 @@
 //  - Car states are heap snapshots of only the pages physics changes (~0.5 MB, not 24 MB).
 //  - NK independent beams with different settings run in parallel (one per core); the main
 //    process verifies every result with a clean, snapshot-free simulation.
-// usage: node tools/beam.js [ref=inputs/summer1_opt.json] [out=inputs/summer1_beam.json]
+// usage: [CONFIGS=l10,..] [BSTART=frame [BSEED=inputs.json]] [NFIN=k] node tools/beam.js [ref=inputs/summer1_opt.json] [out=inputs/summer1_beam.json]
 const { fork } = require('child_process'), fs = require('fs');
 const { createSim, encodeRecording } = require('./sim.js');
 const KEY = { KeyW: 'up', KeyD: 'right', KeyS: 'down', KeyA: 'left', Reset: 'reset' };
@@ -64,15 +64,31 @@ async function beamChild(cfg, refFile) {
     const j = bj, bx = P[3 * j + 3] - P[3 * j], by = P[3 * j + 4] - P[3 * j + 1], bz = P[3 * j + 5] - P[3 * j + 2], l = Math.hypot(bx, by, bz) || 1e-9;
     return { refT: j + bu, off: Math.sqrt(bestD), dy: p[1] - (P[3 * j + 1] + bu * by), foot: [P[3 * j] + bu * bx, P[3 * j + 1] + bu * by, P[3 * j + 2] + bu * bz], tan: [bx / l, by / l, bz / l] };
   }
-  const segsRef = (t, len) => { const s = []; for (let f = t; f < t + len; f++) { const b = refBits[Math.min(f, N - 1)]; if (s.length && s[s.length - 1][0] === b) s[s.length - 1][1]++; else s.push([b, 1]); } return s; };
+  const segsOf = (bits, t, len) => { const s = []; for (let f = t; f < t + len; f++) { const b = bits[Math.max(0, Math.min(f, N - 1))]; if (s.length && s[s.length - 1][0] === b) s[s.length - 1][1]++; else s.push([b, 1]); } return s; };
+  const segsRef = (t, len) => segsOf(refBits, t, len);
+  // BSEED=<inputs.json>: start from these inputs instead of the reference (see BSTART below); the seed's own
+  // inputs are then the clock-aligned "ref" line, while progress is still measured on the reference line
+  let clockBits = refBits;
+  if (process.env.BSEED) {
+    const sd = load(process.env.BSEED); clockBits = new Uint8Array(N);
+    for (const k in BIT) { let on = false, i = 0; const a = sd[k]; for (let f = 0; f < N; f++) { while (i < a.length && a[i] <= f) { on = !on; i++; } if (on) clockBits[f] |= BIT[k]; } }
+  }
+  // BHYST=<ms>: a line that follows the reference by progress keeps its time shift until its progress drifts
+  // more than BHYST ms from it (0 = re-align every block, the original behaviour)
+  const HYST = +(process.env.BHYST || 0);
 
   let beam = [{ id: 0, t: 0, pos: [P[0], P[1], P[2]], parent: null, segs: null, refT: 0, isRef: true }];
   // BSTART=<frame>: play the reference exactly up to that frame, then branch (late-section search)
+  // BSEED=<inputs.json>: play these inputs up to BSTART instead (e.g. a new jump approach), then branch;
+  // progress is still measured against the reference line, which the start state need not be on
   const BSTART = +(process.env.BSTART || 0);
   if (BSTART > 0) {
-    const { res } = await sim.raw({ op: 'bExpand', jobs: [{ pid: 0, cid: 1, segs: segsRef(0, BSTART) }] });
+    const startSegs = segsOf(clockBits, 0, BSTART);
+    const { res } = await sim.raw({ op: 'bExpand', jobs: [{ pid: 0, cid: 1, segs: startSegs }] });
     const r = res[0];
-    beam = [{ id: 1, t: r.frames, pos: r.pos, speed: r.speed, cp: r.cp, parent: beam[0], segs: segsRef(0, BSTART), refT: r.frames, isRef: true }];
+    const refT0 = process.env.BSEED ? project(r.pos, Math.max(0, BSTART - 400), BSTART + 400).refT : r.frames;
+    beam = [{ id: 1, t: r.frames, pos: r.pos, speed: r.speed, cp: r.cp, parent: beam[0], segs: startSegs, refT: refT0, isRef: true }];
+    if (process.env.BSEED) process.send({ log: `[${cfg.name}] seed ${process.env.BSEED} at ${r.frames}: ${(refT0 - r.frames).toFixed(2)} ms ahead of the reference, ${r.speed.toFixed(1)} km/h` });
     await sim.raw({ op: 'bKeep', ids: [1] });
   }
   let nextId = 2, bestFin = null, step = 0, totalLeaks = 0, totalCrashes = 0; const finishers = [];
@@ -84,8 +100,11 @@ async function beamChild(cfg, refFile) {
       // 'ref': the reference line plays its own inputs; any other state plays the reference
       // inputs from the point it has reached on the track (not the clock), so lines that are
       // ahead/behind can still follow the reference's steering through upcoming corners
-      const segs = a === 'ref' ? segsRef(nd.isRef ? nd.t : Math.max(0, Math.round(nd.refT)), BLOCK) : [[a, BLOCK]];
-      const cid = nextId++; jobs.push({ pid: nd.id, cid, segs }); meta.push({ parent: nd, segs, isRef: nd.isRef && a === 'ref' });
+      let segs, sh = nd.sh;
+      if (a !== 'ref') segs = [[a, BLOCK]];
+      else if (nd.isRef) segs = segsOf(clockBits, nd.t, BLOCK);
+      else { const want = nd.refT - nd.t; if (sh === undefined || Math.abs(want - sh) > HYST) sh = Math.round(want); segs = segsRef(Math.max(0, nd.t + sh), BLOCK); }
+      const cid = nextId++; jobs.push({ pid: nd.id, cid, segs }); meta.push({ parent: nd, segs, isRef: nd.isRef && a === 'ref', sh });
     }
     // expand, then check for heap pages outside the snapshot set; if any appeared this step,
     // they were added to every snapshot (exactly) and the step is re-run so no child is contaminated
@@ -103,7 +122,7 @@ async function beamChild(cfg, refFile) {
     const bins = new Map(); let refNode = null; const why = { off: 0, dy: 0, slow: 0, cp: 0, ok: 0 }, prevTop = beam[0]; let topKid = null;
     res.forEach((r, i) => {
       if (r.err) return;
-      const nd = { id: r.cid, t: r.frames, pos: r.pos, speed: r.speed, cp: r.cp, parent: meta[i].parent, segs: meta[i].segs, isRef: meta[i].isRef };
+      const nd = { id: r.cid, t: r.frames, pos: r.pos, speed: r.speed, cp: r.cp, parent: meta[i].parent, segs: meta[i].segs, isRef: meta[i].isRef, sh: meta[i].sh };
       if (r.fin) { finishers.push(nd); if (!bestFin || r.frames < bestFin.t) bestFin = nd; return; }
       // progress is continuous: the match point can only move a little from the parent's
       // (stops matches jumping to another part of the track that passes nearby)
