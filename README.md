@@ -19,9 +19,9 @@ after the page is open.
   `tas-exact.user.js`; prints the final time and checkpoints, saves `result.png`;
   leaderboard submission is blocked).
 
-## Optimized run (22.067s)
+## Optimized run (22.066s)
 
-`inputs/summer1_opt.json` / `tas-exact-opt.user.js` finish in **22.067s**, 47 ms faster than
+`inputs/summer1_opt.json` / `tas-exact-opt.user.js` finish in **22.066s**, 48 ms faster than
 the replayed #1 (22.114s). Verified in the real game in headless Chromium. Found with
 `tools/optimize.js`, `tools/optimize2.js` and mostly `tools/evolve.js`
 (an evolutionary search: population, selection, mutation, crossover; hill-climb over tap timings using the game's own physics worker run
