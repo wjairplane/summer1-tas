@@ -15,7 +15,8 @@ const { createSim, encodeRecording } = require('./sim.js');
 const KEY = { KeyW: 'up', KeyD: 'right', KeyS: 'down', KeyA: 'left', Reset: 'reset' };
 const NAME = Object.fromEntries(Object.entries(KEY).map(([a, b]) => [b, a]));
 const BIT = { up: 1, right: 2, down: 4, left: 8 };
-const ACTIONS = [1, 3, 9, 0, 4, 'ref'];
+// BACTIONS=1,3,9,0,4,6,7,12,ref adds braking while steering (6 = S+D, 7 = W+S+D, 12 = S+A, 5 = W+S)
+const ACTIONS = process.env.BACTIONS ? process.env.BACTIONS.split(',').map(a => a === 'ref' ? 'ref' : +a) : [1, 3, 9, 0, 4, 'ref'];
 const load = f => { const L = { up: [], right: [], down: [], left: [], reset: [] }; for (const [fr, k] of JSON.parse(fs.readFileSync(f))) L[KEY[k]].push(fr); for (const k in L) L[k].sort((a, b) => a - b); return L; };
 const toEvents = L => { const ev = []; for (const k of ['up', 'right', 'down', 'left']) L[k].forEach((f, i) => ev.push([f, NAME[k], i % 2 === 0])); return ev.sort((a, b) => a[0] - b[0] || a[1].localeCompare(b[1])); };
 const bitsToLists = bits => { const L = { up: [], right: [], down: [], left: [], reset: [] }; for (const k in BIT) { let on = false; for (let f = 0; f < bits.length; f++) { const b = !!(bits[f] & BIT[k]); if (b !== on) { L[k].push(f); on = b; } } } return L; };
