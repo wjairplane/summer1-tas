@@ -19,14 +19,16 @@ const valid = L => Object.keys(NAME).every(k => L[k].every((f, i) => i === 0 ? f
 const firstDiff = (A, B) => { let m = 1e9; for (const k in NAME) { const a = A[k], b = B[k], n = Math.max(a.length, b.length); for (let i = 0; i < n; i++) if (a[i] !== b[i]) { m = Math.min(m, a[i] ?? 1e9, b[i] ?? 1e9); break; } } return m; };
 (async () => {
   const sim = await createSim(); await sim.initFast();
-  let best = load(inF), base, F, refZ;
-  const rebase = async () => { base = await sim.setBase(best, 30000, SNAP, W0 - 1000); F = base.frames; refZ = base.P[3 * (F - 1) + 2]; };
+  let best = load(inF), base, F, refZ, refPos;
+  const rebase = async () => { base = await sim.setBase(best, 30000, SNAP, W0 - 1000); F = base.frames; refZ = base.P[3 * (F - 1) + 2]; refPos = [0, 1, 2].map(i => base.P[3 * (F - 1) + i]); };
   await rebase();
   const evalL = async (L, ref) => {
     const from = Math.min(firstDiff(ref, L), F - 2);
     const e = await sim.evalFrom(L, from, F - 1);
     if (e.err) return { s: -1e9 };
     if (e.fin) return { s: 1e6, fin: e.frames };
+    // must still be a real finish approach: all checkpoints taken and near where the current best is
+    if (e.cp < 3 || Math.hypot(e.pos[0] - refPos[0], e.pos[1] - refPos[1], e.pos[2] - refPos[2]) > 3) return { s: -1e9 };
     return { s: -e.pos[0] - 4 * Math.max(0, e.pos[2] - refZ) };
   };
   const t0 = Date.now(), left = () => Date.now() - t0 < MIN * 60000;
