@@ -1,5 +1,5 @@
 // Evolutionary search (population + selection + mutation + crossover), in the spirit of
-// Theo Jansen's Strandbeest leg search. Unlike optimize2/3 (keep one best, judge each
+// Theo Jansen's Strandbeest leg search. Unlike a plain hill-climb (keep one best, judge each
 // candidate once), a population lets promising-but-unfinished lines survive and get
 // repaired over generations.
 //  - Fitness is measured on the run up to just before the finish (TF):
