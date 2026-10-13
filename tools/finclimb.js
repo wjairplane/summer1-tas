@@ -19,8 +19,10 @@ const valid = L => Object.keys(NAME).every(k => L[k].every((f, i) => i === 0 ? f
 const firstDiff = (A, B) => { let m = 1e9; for (const k in NAME) { const a = A[k], b = B[k], n = Math.max(a.length, b.length); for (let i = 0; i < n; i++) if (a[i] !== b[i]) { m = Math.min(m, a[i] ?? 1e9, b[i] ?? 1e9); break; } } return m; };
 (async () => {
   const sim = await createSim(); await sim.initFast();
-  let best = load(inF), base, F, refZ, refPos;
-  const rebase = async () => { base = await sim.setBase(best, 30000, SNAP, W0 - 1000); F = base.frames; refZ = base.P[3 * (F - 1) + 2]; refPos = [0, 1, 2].map(i => base.P[3 * (F - 1) + i]); };
+  let best = load(inF), base, F, refZ, refPos, refCp, dir, side;
+  const rebase = async () => { base = await sim.setBase(best, 120000, SNAP, W0 - 1000); F = base.frames; refZ = base.P[3 * (F - 1) + 2]; refPos = [0, 1, 2].map(i => base.P[3 * (F - 1) + i]); refCp = base.C[F - 1];
+    const a = 3 * (F - 2), v = [base.P[a + 3] - base.P[a], base.P[a + 5] - base.P[a + 2]], l = Math.hypot(v[0], v[1]) || 1;
+    dir = [v[0] / l, 0, v[1] / l]; side = process.env.SIDE === 'left' ? [dir[2], 0, -dir[0]] : process.env.SIDE === 'none' ? [0, 0, 0] : [-dir[2], 0, dir[0]]; };
   await rebase();
   const evalL = async (L, ref) => {
     const from = Math.min(firstDiff(ref, L), F - 2);
@@ -28,20 +30,23 @@ const firstDiff = (A, B) => { let m = 1e9; for (const k in NAME) { const a = A[k
     if (e.err) return { s: -1e9 };
     if (e.fin) return { s: 1e6, fin: e.frames };
     // must still be a real finish approach: all checkpoints taken and near where the current best is
-    if (e.cp < 3 || Math.hypot(e.pos[0] - refPos[0], e.pos[1] - refPos[1], e.pos[2] - refPos[2]) > 3) return { s: -1e9 };
-    return { s: -e.pos[0] - 4 * Math.max(0, e.pos[2] - refZ) };
+    if (e.cp < refCp || Math.hypot(e.pos[0] - refPos[0], e.pos[1] - refPos[1], e.pos[2] - refPos[2]) > 3) return { s: -1e9 };
+    // progress along the direction the car travels into the finish (Summer 1: -x), minus drift toward
+    // the side the current best already grazes (Summer 1: +z edge of the finish box)
+    const d = [0, 1, 2].map(i => e.pos[i] - refPos[i]);
+    return { s: d[0] * dir[0] + d[2] * dir[2] - 4 * Math.max(0, d[0] * side[0] + d[2] * side[2]) };
   };
   const t0 = Date.now(), left = () => Date.now() - t0 < MIN * 60000;
   let bestS = (await evalL(best, best)).s, s0 = bestS, n = 0;
   console.log(`start finish ${F}`);
   const found = async L => {                       // a frame gain: verify cleanly and restart from it
-    const v = await sim.run(encodeRecording(L), 30000);
+    const v = await sim.run(encodeRecording(L), 120000);
     console.log(`*** finishes at ${v.frames} (clean)`);
     if (v.frames < F) { best = L; fs.writeFileSync(outF, JSON.stringify(toEv(best))); await rebase(); bestS = s0 = (await evalL(best, best)).s; console.log(`new best finish ${F}`); return true; }
     return false;
   };
   const seen = new Set(), keyOf = L => Object.keys(NAME).map(k => L[k].join(',')).join('|');
-  const tryL = async L => { if (!valid(L)) return null; const kk = keyOf(L); if (seen.has(kk)) return null; seen.add(kk); n++; const c = await evalL(L, best); if (c.fin && await found(L)) return 'gain'; return c; };
+  const tryL = async L => { if (!valid(L)) return null; const kk = keyOf(L); if (seen.has(kk)) return null; seen.add(kk); n++; const c = await evalL(L, best); if (c.fin) return (await found(L)) ? 'gain' : null; return c; };
   let sweepDry = false;
   while (left()) {
     // 1) sweep (skipped after a sweep that found nothing, until annealing moves the line)

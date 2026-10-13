@@ -130,7 +130,7 @@ function __custom(m){
     postMessage({op:"res",id:m.id,pages:[...dirty].sort((a,b)=>a-b),heap:t.HEAPU8.length});
   }else if(m.op==="eval"){
     let F=0;for(const k of __S.snaps.keys())if(k<=m.from&&k>F)F=k;
-    t.HEAPU8.set(__S.snaps.get(F));
+    const sn=__S.snaps.get(F);t.HEAPU8.set(sn);if(t.HEAPU8.length>sn.length)t.HEAPU8.fill(0,sn.length);   // heap grew after this snapshot
     const r=__go(m.L,{id:0,hasFinished:false,frames:F},m.cap,false,m.sample||0,m.cpStop||0);r.id=m.id;r.resumedFrom=F;postMessage(r);
   }
 }
