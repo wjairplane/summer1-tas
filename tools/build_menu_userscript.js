@@ -1,9 +1,9 @@
-// Builds tas-menu.user.js (all tracks, with a track menu and a Start button) from tas-menu.template.js.
+// Builds all-tracks.user.js (all tracks, with a track menu and a Start button) from tas-menu.template.js.
 // For each track it uses inputs/tracks/<slug>_opt.json if present, else <slug>_wr.json (the #1 replay);
 // Summer 1 uses inputs/summer1_opt.json. Finish times are measured with the offline simulator.
-// usage: node tools/build_menu_userscript.js [out=tas-menu.user.js]
+// usage: node tools/build_menu_userscript.js [out=all-tracks.user.js]
 const fs = require('fs'), path = require('path'), { execFileSync } = require('child_process');
-const ROOT = path.join(__dirname, '..'), OUT = process.argv[2] || path.join(ROOT, 'tas-menu.user.js');
+const ROOT = path.join(__dirname, '..'), OUT = process.argv[2] || path.join(ROOT, 'all-tracks.user.js');
 const index = JSON.parse(fs.readFileSync(path.join(ROOT, 'sim_assets/tracks/index.json')));
 const finish = (slug, file) => {
   const code = `const fs=require('fs');const {createSim,encodeRecording}=require(${JSON.stringify(path.join(__dirname, 'sim.js'))});

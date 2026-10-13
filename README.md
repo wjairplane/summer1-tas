@@ -4,9 +4,9 @@ Tool-assisted runs of **Summer 1** in [PolyTrack](https://www.kodub.com/apps/pol
 
 | Run | Time | Files |
 |---|---|---|
-| Optimized TAS | **22.064 s** | `tas-exact-opt.user.js`, `inputs/summer1_opt.json` |
+| Optimized TAS | **22.064 s** | `summer1.user.js`, `inputs/summer1_opt.json` |
 | Previous best | 22.067 s | `inputs/summer1_opt_22067.json` |
-| Human #1 replay (leaderboard entry 59995962) | 22.114 s | `tas-exact.user.js`, `inputs/summer1.json` |
+| Human #1 replay (leaderboard entry 59995962) | 22.114 s | `summer1-replay.user.js`, `inputs/summer1.json` |
 
 All three are verified in the real game (headless Chromium, 3/3 checkpoints).
 
@@ -26,7 +26,7 @@ the game loads, so they can't be pasted into the console of an open page.
 - If the game updates past 0.6.3, the script warns `patch anchor not found` and does nothing.
 
 Rebuild a userscript from an input file:
-`python3 tools/build_userscript.py inputs/summer1_opt.json tas-exact-opt.user.js`.
+`python3 tools/build_userscript.py inputs/summer1_opt.json summer1.user.js`.
 
 ## Input format
 

@@ -1,10 +1,10 @@
 // Runs a TAS userscript in headless Chromium and prints the final time (needs: npm i playwright).
 // Leaderboard submission is blocked.
-// usage: node tools/run_headless.js [userscript=tas-exact.user.js] [screenshot=result.png] [track slug, e.g. winter1]
-//   With a track slug the userscript must be the menu build (tas-menu.user.js): the track is picked in
+// usage: node tools/run_headless.js [userscript=summer1-replay.user.js] [screenshot=result.png] [track slug, e.g. winter1]
+//   With a track slug the userscript must be the menu build (all-tracks.user.js): the track is picked in
 //   its menu and started with its Start button. Without one, the default track (Summer 1) is started with W.
 const { chromium } = require('playwright'), path = require('path'), fs = require('fs');
-const script = path.resolve(process.argv[2] || path.join(__dirname, '..', 'tas-exact.user.js')), shot = process.argv[3] || 'result.png';
+const script = path.resolve(process.argv[2] || path.join(__dirname, '..', 'summer1-replay.user.js')), shot = process.argv[3] || 'result.png';
 const slug = process.argv[4];
 const index = slug ? JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'sim_assets/tracks/index.json'))) : null;
 const name = slug ? index[slug].name : 'Summer 1';
