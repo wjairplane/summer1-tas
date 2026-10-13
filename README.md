@@ -10,6 +10,37 @@ Tool-assisted runs of **Summer 1** in [PolyTrack](https://www.kodub.com/apps/pol
 
 All three are verified in the real game (headless Chromium, 3/3 checkpoints).
 
+## All official tracks
+
+`all-tracks.user.js` holds every track below. A small menu at the top right picks the track and
+**Start** opens it, presses Play and starts the run. Each track also has its own `<track>.user.js`
+(start the race with W). All times below are verified in the real game.
+
+| Track | #1 replay | TAS | Gain |
+|---|---|---|---|
+| Summer 1 | 22.114 | 22.064 | 50 ms |
+| Summer 2 | 15.178 | 15.176 | 2 ms |
+| Summer 3 | 20.276 | 20.263 | 13 ms |
+| Summer 4 | 34.105 | 34.102 | 3 ms |
+| Summer 5 | 49.815 | 49.789 | 26 ms |
+| Summer 6 | 37.036 | 37.035 | 1 ms |
+| Winter 1 | 16.959 | 16.959 | tie (different line, so not a duplicate) |
+| Winter 2 | 26.830 | 26.829 | 1 ms |
+| Winter 3 | 34.485 | 34.476 | 9 ms |
+| Winter 4 | 19.311 | 19.310 | 1 ms |
+| Winter 5 | 18.425 | 18.424 | 1 ms |
+| Desert 1 | 25.245 | 25.243 | 2 ms |
+| Desert 2 | 28.271 | 28.256 | 15 ms |
+| Desert 3 | 20.172 | 20.166 | 6 ms |
+| Desert 4 | 21.750 | 21.717 | 33 ms |
+| Desert 5 | 29.027 | 29.018 | 9 ms |
+
+Inputs are in `inputs/tracks/<track>_wr.json` (#1 replay) and `<track>_opt.json` (TAS).
+Pipeline for a track: `node tools/capture_tracks.js` (track data + id, once), `python3 tools/fetch_replay.py 1
+inputs/tracks/<track>_wr.json <trackId>`, then `TRACK=<track> SIDE=none node tools/finclimb.js ...` (finish
+search on the last seconds) and, where that stalls, `TRACK=<track> tools/beam.js` with `BSTART`.
+Rebuild the menu script with `node tools/build_menu_userscript.js`.
+
 ## Playing a run
 
 The userscripts patch PolyTrack's physics worker so the inputs are applied on exact 1 ms
