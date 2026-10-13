@@ -69,7 +69,7 @@ const firstDiff = (A, B) => { let m = 1e9; for (const k in NAME) { const a = A[k
     }
     const before = bestS;
     // 3) annealing from the best line with random edits, then back to sweeping
-    let cur = clone(best), curS = bestS, T = 0.004;
+    let cur = clone(best), curS = bestS, T = +(process.env.T0 || 0.004);
     for (let it = 0; it < 8000 && left(); it++, T *= 0.9995) {
       const L = clone(cur), k = ['right', 'right', 'right', 'left', 'up', 'down'][ri(6)], l = L[k], r = rnd();
       const idx = []; l.forEach((f, i) => { if (f >= W0 && f < F) idx.push(i); });
