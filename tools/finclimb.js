@@ -10,7 +10,7 @@ const { createSim, encodeRecording } = require('./sim.js');
 const KEY = { KeyW: 'up', KeyD: 'right', KeyS: 'down', KeyA: 'left', Reset: 'reset' };
 const NAME = { up: 'KeyW', right: 'KeyD', down: 'KeyS', left: 'KeyA' };
 const [inF, outF, minArg, wArg, seedArg] = process.argv.slice(2);
-const MIN = +(minArg || 60), W0 = +(wArg || 20000), SNAP = 50;
+const MIN = +(minArg || 60), W0 = +(wArg || 20000), SNAP = +(process.env.SNAP || 50);
 let seed = +(seedArg || 1); const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648, ri = n => Math.floor(rnd() * n);
 const load = f => { const L = { up: [], right: [], down: [], left: [], reset: [] }; for (const [fr, k] of JSON.parse(fs.readFileSync(f))) L[KEY[k]].push(fr); for (const k in L) L[k].sort((a, b) => a - b); return L; };
 const toEv = L => { const ev = []; for (const k in NAME) L[k].forEach((f, i) => ev.push([f, NAME[k], i % 2 === 0])); return ev.sort((a, b) => a[0] - b[0] || a[1].localeCompare(b[1])); };
