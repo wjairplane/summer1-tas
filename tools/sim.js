@@ -14,7 +14,9 @@ const dec = v => {
 async function createSim() {
   const msgs = JSON.parse(fs.readFileSync(path.join(A, 'msgs.json')));
   const init = dec(msgs.find(m => m.messageType === 0 && m.isRealtime === false));
-  const create = dec(msgs.find(m => m.messageType === 3));
+  // TRACK=<slug> (e.g. winter1): use a track captured by tools/capture_tracks.js instead of Summer 1
+  const create = process.env.TRACK ? dec(JSON.parse(fs.readFileSync(path.join(A, 'tracks', process.env.TRACK + '.json'))).create)
+    : dec(msgs.find(m => m.messageType === 3));
   let src = fs.readFileSync(path.join(A, 'worker.js'), 'utf8');
   // report the final state buffer too
   src = src.replace('function r(i){const r=i.data;switch(r.messageType){case Ki.Init:', fs.readFileSync(path.join(__dirname, 'worker_inject.js'), 'utf8') + 'function r(i){const r=i.data;if(r.messageType===77){__custom(r);return}switch(r.messageType){case Ki.Init:');

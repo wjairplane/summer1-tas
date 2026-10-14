@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fetch a PolyTrack leaderboard recording and convert it to TAS inputs.
 
-usage: fetch_replay.py [rank=1] [out=inputs/summer1.json]
+usage: fetch_replay.py [rank=1] [out=inputs/summer1.json] [trackId (default Summer 1)]
 
 Recording format (from the game's bundle): zlib data holding 5 lists
 (up, right, down, left, reset); each is a 3-byte LE count followed by 3-byte LE
@@ -39,7 +39,8 @@ def parse(buf):
 def main():
     rank = int(sys.argv[1]) if len(sys.argv) > 1 else 1
     out = sys.argv[2] if len(sys.argv) > 2 else "inputs/summer1.json"
-    lb = get(f"leaderboard?version=0.6.3&trackId={TRACK}&skip={rank-1}&amount=1&onlyVerified=true")
+    track = sys.argv[3] if len(sys.argv) > 3 else TRACK
+    lb = get(f"leaderboard?version=0.6.3&trackId={track}&skip={rank-1}&amount=1&onlyVerified=true")
     e = lb["entries"][0]
     rec = get(f"recordings?version=0.6.3&ids={e['id']}")[0]["recording"]
     raw = zlib.decompress(base64.urlsafe_b64decode(rec + "=" * (-len(rec) % 4)))
